@@ -71,6 +71,22 @@ jobs:
             echo '::error::Confirm the dedicated BTP benchmark account before dispatch.'; exit 1;
           }
 
+      - name: Validate Directory admin secrets
+        env:
+          TECHNICAL_USER_EMAIL: ${{ secrets.TECHNICAL_USER_EMAIL }}
+          SECOND_DIRECTORY_ADMIN_EMAIL: ${{ secrets.SECOND_DIRECTORY_ADMIN_EMAIL }}
+        run: |
+          set -euo pipefail
+          [[ -n "$TECHNICAL_USER_EMAIL" ]] || {
+            echo '::error::Configure the TECHNICAL_USER_EMAIL secret for the benchmark environment.'; exit 1;
+          }
+          [[ -n "$SECOND_DIRECTORY_ADMIN_EMAIL" ]] || {
+            echo '::error::Configure the SECOND_DIRECTORY_ADMIN_EMAIL secret for the benchmark environment.'; exit 1;
+          }
+          [[ "${TECHNICAL_USER_EMAIL,,}" != "${SECOND_DIRECTORY_ADMIN_EMAIL,,}" ]] || {
+            echo '::error::TECHNICAL_USER_EMAIL and SECOND_DIRECTORY_ADMIN_EMAIL must identify distinct BTP users.'; exit 1;
+          }
+
       - name: Check out reviewed source
         uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
@@ -121,7 +137,7 @@ jobs:
           }
           echo "path=$package" >> "$GITHUB_OUTPUT"
 
-      - name: Run Subaccount benchmark
+      - name: Run multi-resource BTP benchmark
         id: test
         uses: ./.github/actions/xp-diadromos/.github/actions/run-test
         with:
@@ -134,6 +150,7 @@ jobs:
         env:
           BTP_TECHNICAL_USER: ${{ secrets.BTP_TECHNICAL_USER }}
           TECHNICAL_USER_EMAIL: ${{ secrets.TECHNICAL_USER_EMAIL }}
+          SECOND_DIRECTORY_ADMIN_EMAIL: ${{ secrets.SECOND_DIRECTORY_ADMIN_EMAIL }}
           CIS_CENTRAL_BINDING: ${{ secrets.CIS_CENTRAL_BINDING }}
           GITHUB_RUN_ID: ${{ github.run_id }}
           GITHUB_RUN_ATTEMPT: ${{ github.run_attempt }}
