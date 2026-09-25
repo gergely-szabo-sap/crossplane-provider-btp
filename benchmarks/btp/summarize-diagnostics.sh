@@ -31,23 +31,44 @@ if has_member diagnostics/events.jsonl; then
   event_summary="$(tar --zstd -xOf "$archive" diagnostics/events.jsonl | jq -sr '
     def safe_kind:
       .regarding.kind as $kind
-      | if (["Directory", "DirectoryEntitlement", "Entitlement", "Subaccount", "SubaccountApiCredential"] | index($kind))
+      | if ($kind | type) == "string" and (["Directory", "DirectoryEntitlement", "Entitlement", "Subaccount", "SubaccountApiCredential"] | index($kind))
         then $kind else "other" end;
     def safe_reason:
-      (.reason // "") as $reason
-      | if (["CreatedExternalResource", "DeletedExternalResource", "CannotCreateExternalResource", "CannotObserveExternalResource", "CannotDeleteExternalResource", "CannotUpdateExternalResource", "ExternalNameRecovered", "RecoveryLookupFailed", "RecoveryRefusedBrownfield", "AutoAssignedPreserved"] | index($reason))
+      (.reason // "") as $raw_reason
+      | ($raw_reason | if type == "string" then . else "" end) as $reason
+      | if (["CreatedExternalResource", "DeletedExternalResource", "CannotCreateExternalResource", "CannotObserveExternalResource", "CannotDeleteExternalResource", "CannotUpdateExternalResource", "CannotResolveResourceReferences", "ExternalNameRecovered", "RecoveryLookupFailed", "RecoveryRefusedBrownfield", "AutoAssignedPreserved"] | index($reason))
         then $reason
         elif ($reason | test("^Cannot"; "i")) then "other_cannot"
         elif ($reason | test("^Failed"; "i")) then "other_failed"
         elif ($reason | test("^Error"; "i")) then "other_error"
         elif ($reason | test("^Successfully"; "i")) then "other_success"
         else "other" end;
+    def safe_error_category($input):
+      ($input | if type == "string" then . else "" end) as $text
+      | if ($text | test("atProvider\\.directoryFeatures: Required value"; "i")) then "directory_features_required"
+      elif ($text | test("RBAC: clusterrole[^\\n]*not found"; "i")) then "provider_rbac_role_missing"
+      elif ($text | test("(cannot|failed to|unable to|could not) resolve[^\\n]{0,80}reference|reference[^\\n]{0,80}(not found|unresolved)"; "i")) then "resource_reference_resolution"
+      elif ($text | test("(http|status|response)[^0-9]{0,32}401([^0-9]|$)|401 unauthorized"; "i")) then "btp_http_401"
+      elif ($text | test("(http|status|response)[^0-9]{0,32}403([^0-9]|$)|403 forbidden"; "i")) then "btp_http_403"
+      elif ($text | test("(http|status|response)[^0-9]{0,32}404([^0-9]|$)|404 not found"; "i")) then "btp_http_404"
+      elif ($text | test("(http|status|response)[^0-9]{0,32}409([^0-9]|$)|409 conflict"; "i")) then "btp_http_409"
+      elif ($text | test("(http|status|response)[^0-9]{0,32}429([^0-9]|$)|429 too many requests"; "i")) then "btp_http_429"
+      elif ($text | test("(http|status|response)[^0-9]{0,32}4[0-9]{2}([^0-9]|$)"; "i")) then "btp_http_4xx_other"
+      elif ($text | test("(http|status|response)[^0-9]{0,32}5[0-9]{2}([^0-9]|$)"; "i")) then "btp_http_5xx"
+      elif ($text | test("context deadline exceeded|i/o timeout|request timed out|request timeout|timed out"; "i")) then "provider_request_timeout"
+      elif ($text | test("connection refused|connection reset|no such host|tls handshake timeout|network is unreachable"; "i")) then "provider_transport_error"
+      else "unclassified" end;
+    def safe_event_detail:
+      if .reason == "CannotResolveResourceReferences" then "resource_reference_resolution"
+      elif .type == "Warning" then safe_error_category(.content.message // "")
+      else "not_applicable" end;
     [ .[] | select(.regarding.kind? != null) |
       {kind: safe_kind,
        type: (if .type == "Normal" or .type == "Warning" then .type else "other" end),
-       reason: safe_reason} ]
-    | group_by([.kind, .type, .reason])[]
-    | "Event: kind=\(.[0].kind) type=\(.[0].type) reason=\(.[0].reason) count=\(length)"
+       reason: safe_reason,
+       detail: safe_event_detail} ]
+    | group_by([.kind, .type, .reason, .detail])[]
+    | "Event: kind=\(.[0].kind) type=\(.[0].type) reason=\(.[0].reason) detail=\(.[0].detail) count=\(length)"
   ' 2>/dev/null || true)"
   if [[ -n "$event_summary" ]]; then
     printf '%s\n' "$event_summary"
@@ -58,8 +79,9 @@ fi
 
 if has_member diagnostics/logs.jsonl; then
   log_summary="$(tar --zstd -xOf "$archive" diagnostics/logs.jsonl | jq -sr '
-    def safe_controller($c):
-      if ($c | test("kind=directoryentitlement"; "i")) then "DirectoryEntitlement"
+    def safe_controller($input):
+      ($input | if type == "string" then . else "" end) as $c
+      | if ($c | test("kind=directoryentitlement"; "i")) then "DirectoryEntitlement"
       elif ($c | test("managed/directory\\."; "i")) then "Directory"
       elif ($c | test("kind=directory"; "i")) then "Directory"
       else "other" end;
@@ -67,6 +89,21 @@ if has_member diagnostics/logs.jsonl; then
       (.host_received_at // "") as $timestamp
       | if ($timestamp | type) != "string" then null
         else try ($timestamp | sub("\\.[0-9]+"; "") | fromdateiso8601) catch null end;
+    def safe_error_category($input):
+      ($input | if type == "string" then . else "" end) as $text
+      | if ($text | test("atProvider\\.directoryFeatures: Required value"; "i")) then "directory_features_required"
+      elif ($text | test("RBAC: clusterrole[^\\n]*not found"; "i")) then "provider_rbac_role_missing"
+      elif ($text | test("(cannot|failed to|unable to|could not) resolve[^\\n]{0,80}reference|reference[^\\n]{0,80}(not found|unresolved)"; "i")) then "resource_reference_resolution"
+      elif ($text | test("(http|status|response)[^0-9]{0,32}401([^0-9]|$)|401 unauthorized"; "i")) then "btp_http_401"
+      elif ($text | test("(http|status|response)[^0-9]{0,32}403([^0-9]|$)|403 forbidden"; "i")) then "btp_http_403"
+      elif ($text | test("(http|status|response)[^0-9]{0,32}404([^0-9]|$)|404 not found"; "i")) then "btp_http_404"
+      elif ($text | test("(http|status|response)[^0-9]{0,32}409([^0-9]|$)|409 conflict"; "i")) then "btp_http_409"
+      elif ($text | test("(http|status|response)[^0-9]{0,32}429([^0-9]|$)|429 too many requests"; "i")) then "btp_http_429"
+      elif ($text | test("(http|status|response)[^0-9]{0,32}4[0-9]{2}([^0-9]|$)"; "i")) then "btp_http_4xx_other"
+      elif ($text | test("(http|status|response)[^0-9]{0,32}5[0-9]{2}([^0-9]|$)"; "i")) then "btp_http_5xx"
+      elif ($text | test("context deadline exceeded|i/o timeout|request timed out|request timeout|timed out"; "i")) then "provider_request_timeout"
+      elif ($text | test("connection refused|connection reset|no such host|tls handshake timeout|network is unreachable"; "i")) then "provider_transport_error"
+      else "other_provider_log" end;
     [ .[] | host_epoch as $time | {record: ., timestamp: $time} ] as $records
     | ([$records[].timestamp | select(type == "number")] | if length > 0 then min else null end) as $capture_start
     | [ $records[] | .record as $record | select($record.source.role? == "provider")
@@ -77,14 +114,9 @@ if has_member diagnostics/logs.jsonl; then
       | {controller: safe_controller($m.controller // ""),
          level: (if $m.level == "error" then "error" else "warning" end),
          category:
-           (if ($error | test("atProvider\\.directoryFeatures: Required value"; "i"))
-            then "directory_features_required"
-            elif ($error | test("RBAC: clusterrole[^\\n]*not found"; "i"))
-            then "provider_rbac_role_missing"
-            elif ($message == "Failed to watch" or ($error | test("failed to list \\*"; "i")))
+           (if $message == "Failed to watch" or ($error | test("failed to list \\*"; "i"))
             then "provider_watch_error"
-            elif ($message == "Reconciler error") then "provider_reconcile_error"
-            else "other_provider_log" end),
+            else safe_error_category($error) end),
          capture_window:
            (if $record.host_received_at == null or $capture_start == null then "time_unknown"
             elif (($record | host_epoch) - $capture_start) < 60 then "capture_0_60s"
