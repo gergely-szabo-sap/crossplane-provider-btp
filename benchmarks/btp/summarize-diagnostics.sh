@@ -63,8 +63,14 @@ if has_member diagnostics/logs.jsonl; then
       elif ($c | test("managed/directory\\."; "i")) then "Directory"
       elif ($c | test("kind=directory"; "i")) then "Directory"
       else "other" end;
-    [ .[] | select(.source.role? == "provider") |
-      (try (.content.message | fromjson) catch {}) as $m
+    def host_epoch:
+      (.host_received_at // "") as $timestamp
+      | if ($timestamp | type) != "string" then null
+        else try ($timestamp | sub("\\.[0-9]+"; "") | fromdateiso8601) catch null end;
+    [ .[] | host_epoch as $time | {record: ., timestamp: $time} ] as $records
+    | ([$records[].timestamp | select(type == "number")] | if length > 0 then min else null end) as $capture_start
+    | [ $records[] | .record as $record | select($record.source.role? == "provider")
+      | (try ($record.content.message | fromjson) catch {}) as $m
       | select(($m.level // "") == "error" or ($m.level // "") == "warn" or ($m.level // "") == "warning")
       | ($m.error // "") as $error
       | ($m.msg // "") as $message
@@ -78,11 +84,16 @@ if has_member diagnostics/logs.jsonl; then
             elif ($message == "Failed to watch" or ($error | test("failed to list \\*"; "i")))
             then "provider_watch_error"
             elif ($message == "Reconciler error") then "provider_reconcile_error"
-            else "other_provider_log" end)} ]
-    | group_by([.controller, .level, .category])[]
-    | "Provider log: controller=\(.[0].controller) level=\(.[0].level) category=\(.[0].category) count=\(length)"
+            else "other_provider_log" end),
+         capture_window:
+           (if $record.host_received_at == null or $capture_start == null then "time_unknown"
+            elif (($record | host_epoch) - $capture_start) < 60 then "capture_0_60s"
+            else "capture_60s_plus" end)} ]
+    | group_by([.controller, .level, .category, .capture_window])[]
+    | "Provider log: controller=\(.[0].controller) level=\(.[0].level) category=\(.[0].category) capture_window=\(.[0].capture_window) count=\(length)"
   ' 2>/dev/null || true)"
   if [[ -n "$log_summary" ]]; then
+    echo 'Provider log time buckets are relative to the first retained diagnostic log timestamp, not benchmark start.'
     printf '%s\n' "$log_summary"
   else
     echo 'Provider logs: no matching error or warning records.'

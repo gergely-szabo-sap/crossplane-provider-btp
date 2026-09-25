@@ -27,4 +27,14 @@ reject multiple-archives '.archives += [.archives[0]]'
 reject policy '.policy = {"filename":"policy.yaml"}'
 reject checks '.checks = [{"status":"passed"}]'
 reject wrong-status '.status = "passed"'
+
+jq '.archives[0].k6_metrics |= map(select(.metric != "xp_time_to_ready" or .tags.resource_kind != "DirectoryEntitlement"))' \
+  "$root/tests/report-valid.json" >"$tmp/directoryentitlement-missing-ready.json"
+if GITHUB_STEP_SUMMARY="$tmp/summary.md" "$root/verify-report.sh" "$tmp/directoryentitlement-missing-ready.json" >"$tmp/failure.log" 2>&1; then
+  echo 'unexpectedly accepted missing DirectoryEntitlement Ready evidence' >&2
+  exit 1
+fi
+grep -F 'DirectoryEntitlement ready evidence: missing' "$tmp/failure.log" >/dev/null
+grep -F '| DirectoryEntitlement | missing | ok | ok | ok |' "$tmp/summary.md" >/dev/null
+
 echo 'Report verifier fixtures passed.'
