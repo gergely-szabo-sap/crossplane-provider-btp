@@ -34,9 +34,14 @@ if has_member diagnostics/events.jsonl; then
       | if (["Directory", "DirectoryEntitlement", "Entitlement", "Subaccount", "SubaccountApiCredential"] | index($kind))
         then $kind else "other" end;
     def safe_reason:
-      .reason as $reason
-      | if (["CreatedExternalResource", "DeletedExternalResource", "CannotCreateExternalResource", "CannotObserveExternalResource", "CannotDeleteExternalResource", "CannotUpdateExternalResource"] | index($reason))
-        then $reason else "other" end;
+      (.reason // "") as $reason
+      | if (["CreatedExternalResource", "DeletedExternalResource", "CannotCreateExternalResource", "CannotObserveExternalResource", "CannotDeleteExternalResource", "CannotUpdateExternalResource", "ExternalNameRecovered", "RecoveryLookupFailed", "RecoveryRefusedBrownfield", "AutoAssignedPreserved"] | index($reason))
+        then $reason
+        elif ($reason | test("^Cannot"; "i")) then "other_cannot"
+        elif ($reason | test("^Failed"; "i")) then "other_failed"
+        elif ($reason | test("^Error"; "i")) then "other_error"
+        elif ($reason | test("^Successfully"; "i")) then "other_success"
+        else "other" end;
     [ .[] | select(.regarding.kind? != null) |
       {kind: safe_kind,
        type: (if .type == "Normal" or .type == "Warning" then .type else "other" end),
