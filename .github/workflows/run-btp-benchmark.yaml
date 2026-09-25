@@ -168,6 +168,11 @@ jobs:
           GITHUB_RUN_ID: ${{ github.run_id }}
           GITHUB_RUN_ATTEMPT: ${{ github.run_attempt }}
 
+      - name: Print sanitized diagnostics summary
+        if: ${{ !cancelled() && steps.test.outputs.archive != '' }}
+        continue-on-error: true
+        run: ./benchmarks/btp/summarize-diagnostics.sh "${{ steps.test.outputs.archive }}"
+
       - name: Publish available benchmark report
         id: report
         if: ${{ !cancelled() && steps.test.outputs.archive != '' }}
@@ -183,12 +188,6 @@ jobs:
         id: verify
         if: ${{ !cancelled() && steps.report.outputs.report-json != '' }}
         run: ./benchmarks/btp/verify-report.sh "${{ steps.report.outputs.report-json }}"
-
-      - name: Summarize diagnostics on failure
-        if: >-
-          always() && steps.test.outputs.archive != '' &&
-          (steps.test.outcome != 'success' || steps.report.outcome != 'success' || steps.verify.outcome == 'failure')
-        run: ./benchmarks/btp/summarize-diagnostics.sh "${{ steps.test.outputs.archive }}"
 
       - name: Fail if no archive was produced
         if: ${{ !cancelled() && steps.test.outputs.archive == '' }}
