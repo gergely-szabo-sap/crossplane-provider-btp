@@ -7,10 +7,12 @@ trap 'rm -rf -- "$tmp_dir"' EXIT
 mkdir -p "$tmp_dir/diagnostics"
 
 cat >"$tmp_dir/diagnostics/index.json" <<'JSON'
-{"schema_version":"0.2.0","records":2,"logs":{"complete":true},"events":{"complete":true},"warnings":[]}
+{"schema_version":"0.2.0","records":4,"logs":{"complete":true},"events":{"complete":true},"warnings":[]}
 JSON
 cat >"$tmp_dir/diagnostics/events.jsonl" <<'JSONL'
 {"component":"managed-resource","type":"Warning","reason":"CannotCreateExternalResource","regarding":{"kind":"DirectoryEntitlement","name":"private-resource-name"},"content":{"message":"private event text and identifier"}}
+{"component":"managed-resource","type":"Warning","reason":"CannotResolvePrivateBinding","regarding":{"kind":"DirectoryEntitlement","name":"private-resource-name"},"content":{"message":"private event text and identifier"}}
+{"component":"managed-resource","type":"Warning","reason":"private-resource-name","regarding":{"kind":"DirectoryEntitlement","name":"private-resource-name"},"content":{"message":"private event text and identifier"}}
 JSONL
 cat >"$tmp_dir/diagnostics/logs.jsonl" <<'JSONL'
 {"source":{"role":"provider"},"content":{"message":"{\"level\":\"error\",\"controller\":\"managed/directory.account.btp.sap.crossplane.io\",\"msg\":\"Reconciler error\",\"error\":\"Directory private-resource-name: atProvider.directoryFeatures: Required value; private-identifier\"}"}}
@@ -21,6 +23,8 @@ output="$("$script_dir/summarize-diagnostics.sh" "$tmp_dir/fixture.tsdb.tar.zst"
 
 [[ "$output" == *"logs_complete=true"* ]]
 [[ "$output" == *"kind=DirectoryEntitlement type=Warning reason=CannotCreateExternalResource count=1"* ]]
+[[ "$output" == *"kind=DirectoryEntitlement type=Warning reason=other_cannot count=1"* ]]
+[[ "$output" == *"kind=DirectoryEntitlement type=Warning reason=other count=1"* ]]
 [[ "$output" == *"category=directory_features_required"* ]]
 for forbidden in 'private-resource-name' 'private event text' 'private-identifier'; do
   [[ "$output" != *"$forbidden"* ]] || {
