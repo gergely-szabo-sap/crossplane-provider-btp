@@ -82,6 +82,17 @@ metrics:
     max_size: 1GiB
     drop_labels: []
     k6_bucket_interval: 1s
+  diagnostics:
+    enabled: true
+    max_size: 32MiB
+    poll_interval: 5s
+    managed_resources:
+      - environment: local
+        api_version: account.btp.sap.crossplane.io/v1alpha1
+        kind: DirectoryEntitlement
+        scope: cluster
+        event_namespaces: [default]
+        name_prefix: xp-btp-bench-dirent-
 
 output:
   directory: ./results
