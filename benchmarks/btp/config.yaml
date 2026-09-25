@@ -29,7 +29,7 @@ provider:
     metadata:
       name: default
     spec:
-      globalAccount: ${BTP_GLOBAL_ACCOUNT}
+      globalAccount: ${GLOBAL_ACCOUNT}
       cliServerUrl: ${CLI_SERVER_URL}
       serviceAccountSecret:
         source: Secret
