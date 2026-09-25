@@ -71,12 +71,23 @@ jobs:
             echo '::error::Confirm the dedicated BTP benchmark account before dispatch.'; exit 1;
           }
 
-      - name: Validate Directory admin secrets
+      - name: Validate benchmark account configuration
         env:
+          BTP_GLOBAL_ACCOUNT: ${{ vars.BTP_GLOBAL_ACCOUNT }}
+          CLI_SERVER_URL: ${{ vars.CLI_SERVER_URL }}
           TECHNICAL_USER_EMAIL: ${{ secrets.TECHNICAL_USER_EMAIL }}
           SECOND_DIRECTORY_ADMIN_EMAIL: ${{ secrets.SECOND_DIRECTORY_ADMIN_EMAIL }}
         run: |
           set -euo pipefail
+          [[ -n "$BTP_GLOBAL_ACCOUNT" ]] || {
+            echo '::error::Configure the BTP_GLOBAL_ACCOUNT environment variable to the dedicated global account subdomain.'; exit 1;
+          }
+          [[ -n "$CLI_SERVER_URL" ]] || {
+            echo '::error::Configure the CLI_SERVER_URL environment variable for the benchmark BTP environment.'; exit 1;
+          }
+          [[ "$CLI_SERVER_URL" == https://* ]] || {
+            echo '::error::CLI_SERVER_URL must be an HTTPS URL.'; exit 1;
+          }
           [[ -n "$TECHNICAL_USER_EMAIL" ]] || {
             echo '::error::Configure the TECHNICAL_USER_EMAIL secret for the benchmark environment.'; exit 1;
           }
@@ -148,6 +159,8 @@ jobs:
           provider-image: provider:v0
           release-token: ${{ secrets.XP_DIADROMOS_RELEASE_TOKEN }}
         env:
+          BTP_GLOBAL_ACCOUNT: ${{ vars.BTP_GLOBAL_ACCOUNT }}
+          CLI_SERVER_URL: ${{ vars.CLI_SERVER_URL }}
           BTP_TECHNICAL_USER: ${{ secrets.BTP_TECHNICAL_USER }}
           TECHNICAL_USER_EMAIL: ${{ secrets.TECHNICAL_USER_EMAIL }}
           SECOND_DIRECTORY_ADMIN_EMAIL: ${{ secrets.SECOND_DIRECTORY_ADMIN_EMAIL }}
