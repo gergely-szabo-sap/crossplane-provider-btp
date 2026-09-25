@@ -29,6 +29,8 @@ provider:
     metadata:
       name: default
     spec:
+      globalAccount: ${BTP_GLOBAL_ACCOUNT}
+      cliServerUrl: ${CLI_SERVER_URL}
       serviceAccountSecret:
         source: Secret
         secretRef:
