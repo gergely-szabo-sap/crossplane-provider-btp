@@ -15,7 +15,9 @@ cat >"$tmp_dir/diagnostics/events.jsonl" <<'JSONL'
 {"component":"managed-resource","type":"Warning","reason":"private-resource-name","regarding":{"kind":"DirectoryEntitlement","name":"private-resource-name"},"content":{"message":"private event text and identifier"}}
 JSONL
 cat >"$tmp_dir/diagnostics/logs.jsonl" <<'JSONL'
-{"source":{"role":"provider"},"content":{"message":"{\"level\":\"error\",\"controller\":\"managed/directory.account.btp.sap.crossplane.io\",\"msg\":\"Reconciler error\",\"error\":\"Directory private-resource-name: atProvider.directoryFeatures: Required value; private-identifier\"}"}}
+{"source":{"role":"provider"},"host_received_at":"2026-09-25T16:00:00.000Z","content":{"message":"{\"level\":\"error\",\"controller\":\"managed/directory.account.btp.sap.crossplane.io\",\"msg\":\"Reconciler error\",\"error\":\"Directory private-resource-name: atProvider.directoryFeatures: Required value; private-identifier\"}"}}
+{"source":{"role":"provider"},"host_received_at":"2026-09-25T16:00:30.000Z","content":{"message":"{\"level\":\"error\",\"controller\":\"private-controller-name\",\"msg\":\"Reconciler error\",\"error\":\"RBAC: clusterrole private-role not found\"}"}}
+{"source":{"role":"provider"},"host_received_at":"2026-09-25T16:02:00.000Z","content":{"message":"{\"level\":\"error\",\"controller\":\"private-controller-name\",\"msg\":\"Reconciler error\",\"error\":\"RBAC: clusterrole private-role not found\"}"}}
 JSONL
 
 tar --zstd -cf "$tmp_dir/fixture.tsdb.tar.zst" -C "$tmp_dir" diagnostics
@@ -25,8 +27,11 @@ output="$("$script_dir/summarize-diagnostics.sh" "$tmp_dir/fixture.tsdb.tar.zst"
 [[ "$output" == *"kind=DirectoryEntitlement type=Warning reason=CannotCreateExternalResource count=1"* ]]
 [[ "$output" == *"kind=DirectoryEntitlement type=Warning reason=other_cannot count=1"* ]]
 [[ "$output" == *"kind=DirectoryEntitlement type=Warning reason=other count=1"* ]]
-[[ "$output" == *"category=directory_features_required"* ]]
-for forbidden in 'private-resource-name' 'private event text' 'private-identifier'; do
+[[ "$output" == *"category=directory_features_required capture_window=capture_0_60s count=1"* ]]
+[[ "$output" == *"category=provider_rbac_role_missing capture_window=capture_0_60s count=1"* ]]
+[[ "$output" == *"category=provider_rbac_role_missing capture_window=capture_60s_plus count=1"* ]]
+[[ "$output" == *"relative to the first retained diagnostic log timestamp, not benchmark start"* ]]
+for forbidden in 'private-resource-name' 'private event text' 'private-identifier' 'private-role' 'private-controller-name'; do
   [[ "$output" != *"$forbidden"* ]] || {
     echo "diagnostic summary leaked a private value: $forbidden" >&2
     exit 1
