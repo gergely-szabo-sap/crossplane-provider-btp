@@ -180,8 +180,15 @@ jobs:
           retention-days: 7
 
       - name: Verify published report contract
+        id: verify
         if: ${{ !cancelled() && steps.report.outputs.report-json != '' }}
         run: ./benchmarks/btp/verify-report.sh "${{ steps.report.outputs.report-json }}"
+
+      - name: Summarize diagnostics on failure
+        if: >-
+          always() && steps.test.outputs.archive != '' &&
+          (steps.test.outcome != 'success' || steps.report.outcome != 'success' || steps.verify.outcome == 'failure')
+        run: ./benchmarks/btp/summarize-diagnostics.sh "${{ steps.test.outputs.archive }}"
 
       - name: Fail if no archive was produced
         if: ${{ !cancelled() && steps.test.outputs.archive == '' }}
