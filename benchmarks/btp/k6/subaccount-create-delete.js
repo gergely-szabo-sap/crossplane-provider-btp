@@ -43,6 +43,36 @@ function recordPhase(kind, phase, startedAt, outcome, reason, event) {
   xp.recordMeasurementPhase(phase, event, kind);
 }
 
+const CREDENTIAL_OBSERVATION_VALUES = {
+  condition: ['true', 'false', 'absent', 'other'],
+  subaccountID: ['present', 'absent'],
+  lastPoll: ['ok', 'not_found', 'unauthorized', 'forbidden', 'other_error'],
+  pollError: ['not_found', 'unauthorized', 'forbidden', 'other_error'],
+};
+
+function recordCredentialReadinessObservation(observation) {
+  const safeValue = (group, value, fallback = 'other') => CREDENTIAL_OBSERVATION_VALUES[group].includes(value) ? value : fallback;
+  for (const [field, value] of [
+    ['ready', safeValue('condition', observation?.ready)],
+    ['synced', safeValue('condition', observation?.synced)],
+    ['subaccount_id', safeValue('subaccountID', observation?.subaccountID, 'absent')],
+    ['poll_last', safeValue('lastPoll', observation?.lastPoll, 'other_error')],
+  ]) {
+    xp.recordMeasurementPhase('credential_readiness', `${field}_${value}`, 'SubaccountApiCredential');
+  }
+
+  const errors = Array.isArray(observation?.pollErrors)
+    ? observation.pollErrors.filter((value) => CREDENTIAL_OBSERVATION_VALUES.pollError.includes(value))
+    : [];
+  if (errors.length === 0) {
+    xp.recordMeasurementPhase('credential_readiness', 'poll_error_none_seen', 'SubaccountApiCredential');
+  } else {
+    for (const error of new Set(errors)) {
+      xp.recordMeasurementPhase('credential_readiness', `poll_error_${error}_seen`, 'SubaccountApiCredential');
+    }
+  }
+}
+
 function resource(kind, apiVersion, name, spec, namespaced = true) {
   return {
     apiVersion,
@@ -129,6 +159,9 @@ export default function () {
             apiVersion: manifest.apiVersion,
             timeout: READY_TIMEOUT,
             requireReady: true,
+            ...(kind === 'SubaccountApiCredential'
+              ? { onObservation: recordCredentialReadinessObservation }
+              : {}),
           });
           recordPhase(kind, 'readiness', phaseStarted, 'success', 'none', 'observed');
         });

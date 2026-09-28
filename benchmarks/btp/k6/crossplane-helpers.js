@@ -368,6 +368,39 @@ export function deleteAndWait(kind, name, opts = {}) {
  * @param {object} [opts] - { namespace, timeout, interval, apiVersion }
  * @returns {object} The ready resource
  */
+function safeConditionStatus(resource, type) {
+  const conditions = Array.isArray(resource?.status?.conditions) ? resource.status.conditions : [];
+  const condition = conditions.find((candidate) => candidate?.type === type);
+  if (!condition) return 'absent';
+  if (condition.status === 'True' || condition.status === true) return 'true';
+  if (condition.status === 'False' || condition.status === false) return 'false';
+  return 'other';
+}
+
+function safePollingErrorCategory(error) {
+  const message = String(error?.message || '').toLowerCase();
+  const status = [error?.status, error?.statusCode, error?.code]
+    .filter((value) => value !== undefined && value !== null)
+    .map((value) => String(value).toLowerCase())
+    .join(' ');
+  const text = `${status} ${message}`;
+  if (/(^|\D)401(\D|$)|unauthorized/.test(text)) return 'unauthorized';
+  if (/(^|\D)403(\D|$)|forbidden/.test(text)) return 'forbidden';
+  if (/(^|\D)404(\D|$)|not found/.test(text)) return 'not_found';
+  return 'other_error';
+}
+
+function safeReadinessObservation(resource, lastPoll, pollErrors) {
+  const subaccountID = resource?.spec?.forProvider?.subaccountId;
+  return {
+    ready: safeConditionStatus(resource, 'Ready'),
+    synced: safeConditionStatus(resource, 'Synced'),
+    subaccountID: typeof subaccountID === 'string' && subaccountID.trim() !== '' ? 'present' : 'absent',
+    lastPoll,
+    pollErrors: [...pollErrors].sort(),
+  };
+}
+
 export function waitForReady(kind, name, opts = {}) {
   const client = k8sClient();
   const ns = opts.namespace || DEFAULT_NAMESPACE;
@@ -380,41 +413,55 @@ export function waitForReady(kind, name, opts = {}) {
 
   const deadline = Date.now() + timeout * 1000;
   let lastError = null;
+  let lastPoll = 'not_found';
+  let lastResource;
+  const pollErrors = new Set();
+  let observationEmitted = false;
+  const emitObservation = (resource) => {
+    if (observationEmitted || typeof opts.onObservation !== 'function') return;
+    observationEmitted = true;
+    opts.onObservation(safeReadinessObservation(resource, lastPoll, pollErrors));
+  };
 
   while (Date.now() < deadline) {
+    let resource;
     try {
-      const resource = client.get(groupKind(kind, apiVersion), name, ns);
-
-      const conditions = resource?.status?.conditions || [];
-      const ready = conditions.find(
-        (c) => c.type === 'Ready' || (!opts.requireReady && c.type === 'Synced')
-      );
-
-      if (ready && (ready.status === 'True' || ready.status === true)) {
-        return resource;
-      }
-
-      // Check for explicit failure.
-      const failed = conditions.find(
-        (c) => c.type === 'Ready' && (c.status === 'False' || c.status === false) && c.reason === 'ReconcileError'
-      );
-      if (failed) {
-        xpResourcesFailed.add(1);
-        console.log(`[XP-OPS] failed ${kind}/${name}: reconciliation error`);
-        throw new CrossplaneError(`Resource ${kind}/${name} failed reconciliation`);
-      }
+      resource = client.get(groupKind(kind, apiVersion), name, ns);
+      lastResource = resource;
+      lastPoll = 'ok';
     } catch (e) {
-      // Re-raise our own errors (explicit reconciliation failures).
-      if (e instanceof CrossplaneError) {
-        throw e;
-      }
-      // Store error for diagnostics; keep polling.
+      lastPoll = safePollingErrorCategory(e);
+      pollErrors.add(lastPoll);
       lastError = e;
+      sleep(interval);
+      continue;
+    }
+
+    const conditions = Array.isArray(resource?.status?.conditions) ? resource.status.conditions : [];
+    const ready = conditions.find(
+      (c) => c.type === 'Ready' || (!opts.requireReady && c.type === 'Synced')
+    );
+
+    if (ready && (ready.status === 'True' || ready.status === true)) {
+      emitObservation(resource);
+      return resource;
+    }
+
+    // Check for explicit failure without exposing the condition reason/message.
+    const failed = conditions.find(
+      (c) => c.type === 'Ready' && (c.status === 'False' || c.status === false) && c.reason === 'ReconcileError'
+    );
+    if (failed) {
+      emitObservation(resource);
+      xpResourcesFailed.add(1);
+      console.log(`[XP-OPS] failed ${kind}/${name}: reconciliation error`);
+      throw new CrossplaneError(`Resource ${kind}/${name} failed reconciliation`);
     }
 
     sleep(interval);
   }
 
+  emitObservation(lastResource);
   xpResourcesFailed.add(1);
   console.log(`[XP-OPS] failed ${kind}/${name}: timed out after ${timeout}s`);
   throw new TimeoutError(
