@@ -15,6 +15,9 @@ cat >"$tmp_dir/diagnostics/events.jsonl" <<'JSONL'
 {"component":"managed-resource","type":"Warning","reason":"private-resource-name","regarding":{"kind":"DirectoryEntitlement","name":"private-resource-name"},"content":{"message":"private event text and identifier"}}
 {"component":"managed-resource","type":"Warning","reason":"CannotResolveResourceReferences","regarding":{"kind":"DirectoryEntitlement","name":"private-resource-name"},"content":{"message":"cannot resolve reference private-directory-guid"}}
 {"component":"managed-resource","type":"Warning","reason":"CannotCreateExternalResource","regarding":{"kind":"DirectoryEntitlement","name":"private-resource-name"},"content":{"message":"BTP HTTP status 403 for private-account-id"}}
+{"component":"managed-resource","type":"Warning","reason":"CannotCreateExternalResource","regarding":{"kind":"SubaccountApiCredential","name":"private-api-credential"},"content":{"message":"cannot read client_secret from source for private-api-credential"}}
+{"component":"managed-resource","type":"Warning","reason":"CannotCreateExternalResource","regarding":{"kind":"SubaccountApiCredential","name":"private-api-credential"},"content":{"message":"BTP HTTP status 403 for private-subaccount-id"}}
+{"component":"managed-resource","type":"Warning","reason":"CannotResolveResourceReferences","regarding":{"kind":"SubaccountApiCredential","name":"private-api-credential"},"content":{"message":"cannot resolve reference private-subaccount-guid"}}
 JSONL
 cat >"$tmp_dir/diagnostics/logs.jsonl" <<'JSONL'
 {"source":{"role":"provider"},"host_received_at":"2026-09-25T16:00:00.000Z","content":{"message":"{\"level\":\"error\",\"controller\":\"managed/directory.account.btp.sap.crossplane.io\",\"msg\":\"Reconciler error\",\"error\":\"Directory private-resource-name: atProvider.directoryFeatures: Required value; private-identifier\"}"}}
@@ -24,6 +27,8 @@ cat >"$tmp_dir/diagnostics/logs.jsonl" <<'JSONL'
 {"source":{"role":"provider"},"host_received_at":"2026-09-25T16:04:00.000Z","content":{"message":"{\"level\":\"error\",\"controller\":\"private-controller-name\",\"msg\":\"Reconciler error\",\"error\":\"BTP HTTP status 403 for private-account-id\"}"}}
 {"source":{"role":"provider"},"host_received_at":"2026-09-25T16:05:00.000Z","content":{"message":"{\"level\":\"error\",\"controller\":\"private-controller-name\",\"msg\":\"Reconciler error\",\"error\":\"context deadline exceeded for private-resource-name\"}"}}
 {"source":{"role":"provider"},"host_received_at":"2026-09-25T16:06:00.000Z","content":{"message":"{\"level\":\"error\",\"controller\":\"private-controller-name\",\"msg\":\"Reconciler error\",\"error\":\"token private-token denied for account private-id\"}"}}
+{"source":{"role":"provider"},"host_received_at":"2026-09-25T16:07:00.000Z","content":{"message":"{\"level\":\"error\",\"controller\":\"managed/subaccount_api_credential.security.btp.sap.crossplane.io\",\"msg\":\"Reconciler error\",\"error\":\"cannot read client_secret from source, private-api-credential\"}"}}
+{"source":{"role":"provider"},"host_received_at":"2026-09-25T16:08:00.000Z","content":{"message":"{\"level\":\"error\",\"controller\":\"managed/subaccount_api_credential.security.btp.sap.crossplane.io\",\"msg\":\"Reconciler error\",\"error\":\"cannot reconstruct external-name: subaccount_id missing from tfstate private-guid\"}"}}
 JSONL
 
 tar --zstd -cf "$tmp_dir/fixture.tsdb.tar.zst" -C "$tmp_dir" diagnostics
@@ -37,6 +42,9 @@ grep -F 'Diagnostics warning: category=logs_rate_limited count=1' "$tmp_dir/summ
 [[ "$output" == *"Diagnostics warning: category=other count=1"* ]]
 [[ "$output" == *"kind=DirectoryEntitlement type=Warning reason=CannotCreateExternalResource detail=unclassified count=1"* ]]
 [[ "$output" == *"kind=DirectoryEntitlement type=Warning reason=CannotCreateExternalResource detail=btp_http_403 count=1"* ]]
+[[ "$output" == *"kind=SubaccountApiCredential type=Warning reason=CannotCreateExternalResource detail=api_credential_client_secret_missing count=1"* ]]
+[[ "$output" == *"kind=SubaccountApiCredential type=Warning reason=CannotCreateExternalResource detail=btp_http_403 count=1"* ]]
+[[ "$output" == *"kind=SubaccountApiCredential type=Warning reason=CannotResolveResourceReferences detail=resource_reference_resolution count=1"* ]]
 [[ "$output" == *"kind=DirectoryEntitlement type=Warning reason=CannotResolveResourceReferences detail=resource_reference_resolution count=1"* ]]
 [[ "$output" == *"kind=DirectoryEntitlement type=Warning reason=other_cannot detail=unclassified count=1"* ]]
 [[ "$output" == *"kind=DirectoryEntitlement type=Warning reason=other detail=unclassified count=1"* ]]
@@ -47,8 +55,10 @@ grep -F 'Diagnostics warning: category=logs_rate_limited count=1' "$tmp_dir/summ
 [[ "$output" == *"category=btp_http_403 capture_window=capture_60s_plus count=1"* ]]
 [[ "$output" == *"category=provider_request_timeout capture_window=capture_60s_plus count=1"* ]]
 [[ "$output" == *"category=other_provider_log capture_window=capture_60s_plus count=1"* ]]
+[[ "$output" == *"controller=SubaccountApiCredential level=error category=api_credential_client_secret_missing capture_window=capture_60s_plus count=1"* ]]
+[[ "$output" == *"controller=SubaccountApiCredential level=error category=api_credential_state_missing capture_window=capture_60s_plus count=1"* ]]
 [[ "$output" == *"relative to the first retained diagnostic log timestamp, not benchmark start"* ]]
-for forbidden in 'private-resource-name' 'private event text' 'private-identifier' 'private-role' 'private-controller-name' 'private-directory-guid' 'private-account-id' 'private-token' 'private-id' 'private-environment' 'private-namespace' 'secret-value'; do
+for forbidden in 'private-resource-name' 'private-api-credential' 'private-subaccount-id' 'private-subaccount-guid' 'private event text' 'private-identifier' 'private-role' 'private-controller-name' 'private-directory-guid' 'private-account-id' 'private-token' 'private-id' 'private-guid' 'private-environment' 'private-namespace' 'secret-value'; do
   [[ "$output" != *"$forbidden"* ]] || {
     echo "diagnostic summary leaked a private value: $forbidden" >&2
     exit 1
