@@ -16,6 +16,7 @@ function harness({ createFailure, readyFailure, readyTimeout = false, deleteFail
   const metrics = [];
   const phaseEvents = [];
   const credentialObservations = [];
+  const logs = [];
   const client = {
     create(manifest) {
       if (createFailure === manifest.kind) throw new Error('simulated create failure');
@@ -66,10 +67,10 @@ function harness({ createFailure, readyFailure, readyTimeout = false, deleteFail
       XP_DIADROMOS_BTP_SUBACCOUNT_ADMIN: subaccountAdmin,
       XP_DIADROMOS_BTP_SECOND_DIRECTORY_ADMIN: secondDirectoryAdmin,
       GITHUB_RUN_ATTEMPT: '1',
-    }, Date, console,
+    }, Date, console: { log: (...args) => logs.push(args.join(' ')) },
   };
   vm.runInNewContext(`${source}\nthis.runWorkload = workload; this.runOptions = options;`, context);
-  return { run: context.runWorkload, options: context.runOptions, created, deleted, ready, metrics, phaseEvents, credentialObservations };
+  return { run: context.runWorkload, options: context.runOptions, created, deleted, ready, metrics, phaseEvents, credentialObservations, logs };
 }
 
 const kinds = ['Subaccount', 'Directory', 'Entitlement', 'DirectoryEntitlement', 'SubaccountApiCredential'];
@@ -89,6 +90,12 @@ assert.ok(happy.phaseEvents.some((x) => x.phase === 'readiness' && x.event === '
 assert.ok(happy.phaseEvents.some((x) => x.phase === 'delete_request' && x.event === 'accepted' && x.resourceKind === 'DirectoryEntitlement'));
 assert.ok(happy.phaseEvents.some((x) => x.phase === 'kubernetes_absence_wait' && x.event === 'observed' && x.resourceKind === 'DirectoryEntitlement'));
 assert.deepEqual(happy.credentialObservations.length, 1, 'only the credential has a readiness observation');
+const readinessLog = happy.logs.find((line) => line.includes('Allowlisted SubaccountApiCredential observation'));
+assert.ok(readinessLog?.includes('kind: SubaccountApiCredential'));
+assert.ok(readinessLog?.includes('subaccountId: <present>'));
+assert.ok(readinessLog?.includes('status: true'));
+assert.ok(readinessLog?.includes('lastResult: ok'));
+assert.ok(!readinessLog?.includes('benchmark@example.invalid'));
 for (const field of ['ready_true', 'synced_true', 'subaccount_id_present', 'poll_last_ok', 'poll_error_none_seen']) {
   assert.ok(happy.phaseEvents.some((x) => x.phase === 'credential_readiness' && x.event === field && x.resourceKind === 'SubaccountApiCredential'), `missing safe credential observation ${field}`);
 }
@@ -126,6 +133,10 @@ const hostileObservation = harness({ credentialObservation: {
 hostileObservation.run();
 for (const event of hostileObservation.phaseEvents.filter((x) => x.phase === 'credential_readiness')) {
   assert.ok(!event.event.includes('private'), `unsafe readiness value escaped into metric tag: ${event.event}`);
+}
+const hostileLog = hostileObservation.logs.find((line) => line.includes('Allowlisted SubaccountApiCredential observation'));
+for (const secret of ['private condition message', 'private-subaccount-id', 'private response', 'private error text']) {
+  assert.ok(!hostileLog?.includes(secret), `unsafe readiness value escaped into log: ${secret}`);
 }
 assert.ok(hostileObservation.phaseEvents.some((x) => x.event === 'ready_other'));
 assert.ok(hostileObservation.phaseEvents.some((x) => x.event === 'subaccount_id_absent'));

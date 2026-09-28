@@ -18,6 +18,8 @@ grep -F '| DirectoryEntitlement | readiness | timeout | timeout | 1 | 600000 |' 
 grep -F '| DirectoryEntitlement | create_request | accepted | 1 |' "$tmp/phases-summary.md" >/dev/null
 grep -F '| ready_false | 1 |' "$tmp/phases-summary.md" >/dev/null
 grep -F '| poll_last_forbidden | 1 |' "$tmp/phases-summary.md" >/dev/null
+grep -F 'category: "ready_false"' "$tmp/phases-summary.md" >/dev/null
+grep -F 'resourceKind: SubaccountApiCredential' "$tmp/phases-summary.md" >/dev/null
 if grep -F -e 'private-resource-name' -e 'private-error' -e 'private-condition-message' "$tmp/phases-summary.md" >/dev/null; then
   echo 'lifecycle phase summary leaked an unreviewed tag value' >&2
   exit 1
