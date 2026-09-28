@@ -9,12 +9,13 @@ const source = fs.readFileSync(new URL('./k6/subaccount-create-delete.js', `file
   .replace('export const options', 'const options')
   .replace('export default function ()', 'function workload()');
 
-function harness({ createFailure, readyFailure, readyTimeout = false, deleteFailure, subaccountAdmin = 'benchmark@example.invalid', secondDirectoryAdmin = 'directory-admin-two' } = {}) {
+function harness({ createFailure, readyFailure, readyTimeout = false, deleteFailure, credentialObservation, subaccountAdmin = 'benchmark@example.invalid', secondDirectoryAdmin = 'directory-admin-two' } = {}) {
   const created = [];
   const deleted = [];
   const ready = [];
   const metrics = [];
   const phaseEvents = [];
+  const credentialObservations = [];
   const client = {
     create(manifest) {
       if (createFailure === manifest.kind) throw new Error('simulated create failure');
@@ -24,8 +25,19 @@ function harness({ createFailure, readyFailure, readyTimeout = false, deleteFail
   const xp = {
     k8sClient: () => client,
     measureOperation(_op, _kind, fn) { return fn(); },
-    waitForReady(kind, name) {
+    waitForReady(kind, name, opts = {}) {
       ready.push(kind);
+      if (kind === 'SubaccountApiCredential' && opts.onObservation) {
+        const observation = credentialObservation || {
+          ready: readyFailure === kind ? 'false' : 'true',
+          synced: 'true',
+          subaccountID: 'present',
+          lastPoll: 'ok',
+          pollErrors: [],
+        };
+        opts.onObservation(observation);
+        credentialObservations.push(observation);
+      }
       if (readyFailure === kind) {
         const error = new Error('simulated readiness failure');
         if (readyTimeout) error.name = 'TimeoutError';
@@ -57,7 +69,7 @@ function harness({ createFailure, readyFailure, readyTimeout = false, deleteFail
     }, Date, console,
   };
   vm.runInNewContext(`${source}\nthis.runWorkload = workload; this.runOptions = options;`, context);
-  return { run: context.runWorkload, options: context.runOptions, created, deleted, ready, metrics, phaseEvents };
+  return { run: context.runWorkload, options: context.runOptions, created, deleted, ready, metrics, phaseEvents, credentialObservations };
 }
 
 const kinds = ['Subaccount', 'Directory', 'Entitlement', 'DirectoryEntitlement', 'SubaccountApiCredential'];
@@ -76,6 +88,10 @@ assert.ok(happy.phaseEvents.some((x) => x.phase === 'create_request' && x.event 
 assert.ok(happy.phaseEvents.some((x) => x.phase === 'readiness' && x.event === 'observed' && x.resourceKind === 'DirectoryEntitlement'));
 assert.ok(happy.phaseEvents.some((x) => x.phase === 'delete_request' && x.event === 'accepted' && x.resourceKind === 'DirectoryEntitlement'));
 assert.ok(happy.phaseEvents.some((x) => x.phase === 'kubernetes_absence_wait' && x.event === 'observed' && x.resourceKind === 'DirectoryEntitlement'));
+assert.deepEqual(happy.credentialObservations.length, 1, 'only the credential has a readiness observation');
+for (const field of ['ready_true', 'synced_true', 'subaccount_id_present', 'poll_last_ok', 'poll_error_none_seen']) {
+  assert.ok(happy.phaseEvents.some((x) => x.phase === 'credential_readiness' && x.event === field && x.resourceKind === 'SubaccountApiCredential'), `missing safe credential observation ${field}`);
+}
 assert.equal(new Set(happy.created.map((x) => x.metadata.name)).size, kinds.length);
 assert.deepEqual(Array.from(happy.created[1].spec.forProvider.directoryAdmins), ['benchmark@example.invalid', 'directory-admin-two']);
 assert.equal(happy.created[1].metadata.namespace, undefined, 'Directory is cluster-scoped');
@@ -95,6 +111,26 @@ const readyFail = harness({ readyFailure: 'Entitlement' });
 assert.throws(() => readyFail.run(), /create\/readiness failed/);
 assert.deepEqual(readyFail.deleted.map((x) => x.kind), ['Entitlement', 'Directory', 'Subaccount']);
 assert.ok(readyFail.phaseEvents.some((x) => x.phase === 'readiness' && x.event === 'failed' && x.resourceKind === 'Entitlement'));
+
+const credentialTimeout = harness({ readyFailure: 'SubaccountApiCredential', readyTimeout: true });
+assert.throws(() => credentialTimeout.run(), /create\/readiness failed \(timeout\)/);
+assert.ok(credentialTimeout.phaseEvents.some((x) => x.phase === 'credential_readiness' && x.event === 'ready_false' && x.resourceKind === 'SubaccountApiCredential'));
+
+const hostileObservation = harness({ credentialObservation: {
+  ready: 'private condition message',
+  synced: 'true',
+  subaccountID: 'private-subaccount-id',
+  lastPoll: 'private response',
+  pollErrors: ['forbidden', 'private error text'],
+} });
+hostileObservation.run();
+for (const event of hostileObservation.phaseEvents.filter((x) => x.phase === 'credential_readiness')) {
+  assert.ok(!event.event.includes('private'), `unsafe readiness value escaped into metric tag: ${event.event}`);
+}
+assert.ok(hostileObservation.phaseEvents.some((x) => x.event === 'ready_other'));
+assert.ok(hostileObservation.phaseEvents.some((x) => x.event === 'subaccount_id_absent'));
+assert.ok(hostileObservation.phaseEvents.some((x) => x.event === 'poll_last_other_error'));
+assert.ok(hostileObservation.phaseEvents.some((x) => x.event === 'poll_error_forbidden_seen'));
 
 const readyTimeout = harness({ readyFailure: 'DirectoryEntitlement', readyTimeout: true });
 assert.throws(() => readyTimeout.run(), /create\/readiness failed \(timeout\)/);
