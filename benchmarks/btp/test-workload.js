@@ -9,11 +9,14 @@ const source = fs.readFileSync(new URL('./k6/subaccount-create-delete.js', `file
   .replace('export const options', 'const options')
   .replace('export default function ()', 'function workload()');
 
-function harness({ createFailure, readyFailure, deleteFailure, subaccountAdmin = 'benchmark@example.invalid', secondDirectoryAdmin = 'directory-admin-two' } = {}) {
+function harness({ createFailure, readyFailure, readyTimeout = false, deleteFailure, credentialObservation, subaccountAdmin = 'benchmark@example.invalid', secondDirectoryAdmin = 'directory-admin-two' } = {}) {
   const created = [];
   const deleted = [];
   const ready = [];
   const metrics = [];
+  const phaseEvents = [];
+  const credentialObservations = [];
+  const logs = [];
   const client = {
     create(manifest) {
       if (createFailure === manifest.kind) throw new Error('simulated create failure');
@@ -23,28 +26,57 @@ function harness({ createFailure, readyFailure, deleteFailure, subaccountAdmin =
   const xp = {
     k8sClient: () => client,
     measureOperation(_op, _kind, fn) { return fn(); },
-    waitForReady(kind, name) {
+    waitForReady(kind, name, opts = {}) {
       ready.push(kind);
-      if (readyFailure === kind) throw new Error('simulated readiness failure');
+      if (kind === 'SubaccountApiCredential' && opts.onObservation) {
+        const observation = credentialObservation || {
+          ready: { status: readyFailure === kind ? 'false' : 'true', reason: 'reconcile_success', generation: 'current', transitionAge: 'under_1m', messageCategory: 'not_applicable' },
+          synced: { status: 'true', reason: 'reconcile_success', generation: 'current', transitionAge: 'under_1m', messageCategory: 'not_applicable' },
+          history: {
+            readyStatuses: [readyFailure === kind ? 'false' : 'true'], readyReasons: ['reconcile_success'], readyMessageCategories: ['not_applicable'],
+            syncedStatuses: ['true'], syncedReasons: ['reconcile_success'], syncedMessageCategories: ['not_applicable'],
+            atProviderID: ['present'], externalName: ['present'],
+          },
+          subaccountID: 'present', atProviderID: 'present', atProviderName: 'present',
+          atProviderSubaccountID: 'present', certificateReceived: 'absent', credentialType: 'secrets',
+          externalName: 'present', pollCountBucket: '11_to_60', pollErrorCountBucket: '0',
+          lastPoll: 'ok', pollErrors: [],
+        };
+        opts.onObservation(observation);
+        credentialObservations.push(observation);
+      }
+      if (readyFailure === kind) {
+        const error = new Error('simulated readiness failure');
+        if (readyTimeout) error.name = 'TimeoutError';
+        throw error;
+      }
     },
-    deleteAndWait(kind, name) {
+    deleteAndWait(kind, name, opts = {}) {
       deleted.push({ kind, name });
       if (deleteFailure === kind) throw new Error('simulated delete failure');
+      opts.onDeleteAccepted?.(1);
+      opts.onKubernetesObjectAbsent?.(2);
     },
     xpResourcesCreated: { add() {} },
     xpResourcesFailed: { add() {} },
+    recordMeasurementPhase(phase, event, resourceKind) {
+      phaseEvents.push({ phase, event, resourceKind });
+    },
   };
-  class Trend { add(value, tags) { metrics.push({ value, tags }); } }
+  class Trend {
+    constructor(name) { this.name = name; }
+    add(value, tags) { metrics.push({ name: this.name, value, tags }); }
+  }
   const context = {
     xp, Trend, __ENV: {
       XP_DIADROMOS_BTP_RUN_ID: 'offline-test',
       XP_DIADROMOS_BTP_SUBACCOUNT_ADMIN: subaccountAdmin,
       XP_DIADROMOS_BTP_SECOND_DIRECTORY_ADMIN: secondDirectoryAdmin,
       GITHUB_RUN_ATTEMPT: '1',
-    }, Date, console,
+    }, Date, console: { log: (...args) => logs.push(args.join(' ')) },
   };
   vm.runInNewContext(`${source}\nthis.runWorkload = workload; this.runOptions = options;`, context);
-  return { run: context.runWorkload, options: context.runOptions, created, deleted, ready, metrics };
+  return { run: context.runWorkload, options: context.runOptions, created, deleted, ready, metrics, phaseEvents, credentialObservations, logs };
 }
 
 const kinds = ['Subaccount', 'Directory', 'Entitlement', 'DirectoryEntitlement', 'SubaccountApiCredential'];
@@ -57,6 +89,28 @@ happy.run();
 assert.deepEqual(happy.created.map((x) => x.kind), kinds);
 assert.deepEqual(happy.ready, kinds);
 assert.deepEqual(happy.deleted.map((x) => x.kind), [...kinds].reverse());
+assert.equal(happy.metrics.filter((x) => x.name === 'xp_lifecycle_phase_duration').length, kinds.length * 4);
+assert.ok(happy.phaseEvents.some((x) => x.phase === 'create_request' && x.event === 'requested' && x.resourceKind === 'DirectoryEntitlement'));
+assert.ok(happy.phaseEvents.some((x) => x.phase === 'create_request' && x.event === 'accepted' && x.resourceKind === 'DirectoryEntitlement'));
+assert.ok(happy.phaseEvents.some((x) => x.phase === 'readiness' && x.event === 'observed' && x.resourceKind === 'DirectoryEntitlement'));
+assert.ok(happy.phaseEvents.some((x) => x.phase === 'delete_request' && x.event === 'accepted' && x.resourceKind === 'DirectoryEntitlement'));
+assert.ok(happy.phaseEvents.some((x) => x.phase === 'kubernetes_absence_wait' && x.event === 'observed' && x.resourceKind === 'DirectoryEntitlement'));
+assert.deepEqual(happy.credentialObservations.length, 1, 'only the credential has a readiness observation');
+const readinessLog = happy.logs.find((line) => line.includes('Allowlisted SubaccountApiCredential observation'));
+assert.ok(readinessLog?.includes('kind: SubaccountApiCredential'));
+assert.ok(readinessLog?.includes('subaccountId: <present>'));
+assert.ok(readinessLog?.includes('status: true'));
+assert.ok(readinessLog?.includes('reasonCategory: reconcile_success'));
+assert.ok(readinessLog?.includes('messageCategory: not_applicable'));
+assert.ok(readinessLog?.includes('readyStatusesSeen: [true]'));
+assert.ok(readinessLog?.includes('observedGeneration: current'));
+assert.ok(readinessLog?.includes('id: <present>'));
+assert.ok(readinessLog?.includes('requestCount: 11_to_60'));
+assert.ok(readinessLog?.includes('lastResult: ok'));
+assert.ok(!readinessLog?.includes('benchmark@example.invalid'));
+for (const field of ['ready_true', 'ready_reason_reconcile_success', 'ready_generation_current', 'ready_transition_age_under_1m', 'ready_message_not_applicable', 'ready_seen_status_true', 'synced_true', 'synced_seen_reason_reconcile_success', 'subaccount_id_present', 'at_provider_id_present', 'at_provider_id_seen_present', 'external_name_seen_present', 'credential_type_secrets', 'poll_count_11_to_60', 'poll_last_ok', 'poll_error_count_0', 'poll_error_none_seen']) {
+  assert.ok(happy.phaseEvents.some((x) => x.phase === 'credential_readiness' && x.event === field && x.resourceKind === 'SubaccountApiCredential'), `missing safe credential observation ${field}`);
+}
 assert.equal(new Set(happy.created.map((x) => x.metadata.name)).size, kinds.length);
 assert.deepEqual(Array.from(happy.created[1].spec.forProvider.directoryAdmins), ['benchmark@example.invalid', 'directory-admin-two']);
 assert.equal(happy.created[1].metadata.namespace, undefined, 'Directory is cluster-scoped');
@@ -75,6 +129,45 @@ assert.equal(duplicateAdmins.created.length, 0, 'reject duplicate Directory admi
 const readyFail = harness({ readyFailure: 'Entitlement' });
 assert.throws(() => readyFail.run(), /create\/readiness failed/);
 assert.deepEqual(readyFail.deleted.map((x) => x.kind), ['Entitlement', 'Directory', 'Subaccount']);
+assert.ok(readyFail.phaseEvents.some((x) => x.phase === 'readiness' && x.event === 'failed' && x.resourceKind === 'Entitlement'));
+
+const credentialTimeout = harness({ readyFailure: 'SubaccountApiCredential', readyTimeout: true });
+assert.throws(() => credentialTimeout.run(), /create\/readiness failed \(timeout\)/);
+assert.ok(credentialTimeout.phaseEvents.some((x) => x.phase === 'credential_readiness' && x.event === 'ready_false' && x.resourceKind === 'SubaccountApiCredential'));
+
+const hostileObservation = harness({ credentialObservation: {
+  ready: { status: 'private condition message', reason: 'private condition reason', generation: 'private generation', transitionAge: 'private timestamp', messageCategory: 'private message category' },
+  synced: { status: 'true', reason: 'ReconcileSuccess', generation: 'current', transitionAge: 'under_1m', messageCategory: 'not_applicable' },
+  history: {
+    readyStatuses: ['private condition message'], readyReasons: ['private condition reason'], readyMessageCategories: ['private error message'],
+    syncedStatuses: ['true'], syncedReasons: ['ReconcileSuccess'], syncedMessageCategories: ['not_applicable'],
+    atProviderID: ['private external id'], externalName: ['private external name'],
+  },
+  subaccountID: 'private-subaccount-id', atProviderID: 'private external id',
+  atProviderName: 'private name', atProviderSubaccountID: 'private parent id',
+  certificateReceived: 'private certificate', credentialType: 'private credential type',
+  externalName: 'private external name', pollCountBucket: 'private count',
+  pollErrorCountBucket: 'private count', lastPoll: 'private response',
+  pollErrors: ['forbidden', 'private error text'],
+} });
+hostileObservation.run();
+for (const event of hostileObservation.phaseEvents.filter((x) => x.phase === 'credential_readiness')) {
+  assert.ok(!event.event.includes('private'), `unsafe readiness value escaped into metric tag: ${event.event}`);
+}
+const hostileLog = hostileObservation.logs.find((line) => line.includes('Allowlisted SubaccountApiCredential observation'));
+for (const secret of ['private condition message', 'private condition reason', 'private generation', 'private timestamp', 'private-subaccount-id', 'private external id', 'private name', 'private parent id', 'private certificate', 'private credential type', 'private external name', 'private count', 'private response', 'private error text', 'private message category', 'private error message']) {
+  assert.ok(!hostileLog?.includes(secret), `unsafe readiness value escaped into log: ${secret}`);
+}
+assert.ok(hostileObservation.phaseEvents.some((x) => x.event === 'ready_other'));
+assert.ok(hostileObservation.phaseEvents.some((x) => x.event === 'ready_reason_other'));
+assert.ok(hostileObservation.phaseEvents.some((x) => x.event === 'ready_generation_other'));
+assert.ok(hostileObservation.phaseEvents.some((x) => x.event === 'subaccount_id_absent'));
+assert.ok(hostileObservation.phaseEvents.some((x) => x.event === 'poll_last_other_error'));
+assert.ok(hostileObservation.phaseEvents.some((x) => x.event === 'poll_error_forbidden_seen'));
+
+const readyTimeout = harness({ readyFailure: 'DirectoryEntitlement', readyTimeout: true });
+assert.throws(() => readyTimeout.run(), /create\/readiness failed \(timeout\)/);
+assert.ok(readyTimeout.metrics.some((x) => x.name === 'xp_lifecycle_phase_duration' && x.tags.stage === 'readiness' && x.tags.outcome === 'timeout' && x.tags.reason === 'timeout'));
 
 const partialCreate = harness({ createFailure: 'Entitlement' });
 assert.throws(() => partialCreate.run(), /create\/readiness failed/);
@@ -82,6 +175,7 @@ assert.deepEqual(partialCreate.deleted.map((x) => x.kind), ['Directory', 'Subacc
 
 const deleteFail = harness({ deleteFailure: 'DirectoryEntitlement' });
 assert.throws(() => deleteFail.run(), /delete failed for owned DirectoryEntitlement/);
+assert.ok(deleteFail.phaseEvents.some((x) => x.phase === 'delete_request' && x.event === 'failed' && x.resourceKind === 'DirectoryEntitlement'));
 assert.deepEqual(deleteFail.deleted.map((x) => x.kind), [...kinds].reverse(), 'cleanup continues after a delete error');
 
 console.log('Workload manifest and cleanup fixtures passed.');
