@@ -77,6 +77,8 @@ if ! contract_data="$(jq -r '
                 "certificate_received_present", "certificate_received_absent",
                 "credential_type_secrets", "credential_type_certificates", "credential_type_absent", "credential_type_other",
                 "external_name_present", "external_name_absent",
+                "at_provider_id_seen_present", "at_provider_id_seen_absent",
+                "external_name_seen_present", "external_name_seen_absent",
                 "poll_last_ok", "poll_last_not_found", "poll_last_unauthorized", "poll_last_forbidden", "poll_last_other_error",
                 "poll_error_count_0", "poll_error_count_1", "poll_error_count_2_to_5", "poll_error_count_over_5",
                 "poll_count_1", "poll_count_2_to_10", "poll_count_11_to_60", "poll_count_61_to_600", "poll_count_over_600",
@@ -88,6 +90,16 @@ if ! contract_data="$(jq -r '
                + (["current", "stale", "ahead", "not_reported", "invalid", "unavailable", "other"] | map("synced_generation_" + .))
                + (["absent", "invalid", "future", "under_1m", "1_to_5m", "5_to_10m", "over_10m", "other"] | map("ready_transition_age_" + .))
                + (["absent", "invalid", "future", "under_1m", "1_to_5m", "5_to_10m", "over_10m", "other"] | map("synced_transition_age_" + .))
+               + (["absent", "not_applicable", "authentication", "authorization", "rate_limited", "timeout", "transport", "remote_server", "not_found", "conflict", "validation", "reference", "unsupported", "unknown"] | map("ready_message_" + .))
+               + (["absent", "not_applicable", "authentication", "authorization", "rate_limited", "timeout", "transport", "remote_server", "not_found", "conflict", "validation", "reference", "unsupported", "unknown"] | map("synced_message_" + .))
+               + (["absent", "not_applicable", "authentication", "authorization", "rate_limited", "timeout", "transport", "remote_server", "not_found", "conflict", "validation", "reference", "unsupported", "unknown"] | map("ready_seen_message_" + .))
+               + (["absent", "not_applicable", "authentication", "authorization", "rate_limited", "timeout", "transport", "remote_server", "not_found", "conflict", "validation", "reference", "unsupported", "unknown"] | map("synced_seen_message_" + .))
+               + (["true", "false", "absent", "other"] | map("ready_seen_status_" + .))
+               + (["true", "false", "absent", "other"] | map("synced_seen_status_" + .))
+               + (["absent", "reconcile_success", "reconcile_error", "creating", "deleting", "unavailable", "late_initialize", "async_operation", "waiting", "reconcile_paused", "cannot_initialize", "cannot_connect_provider", "cannot_get_reference", "cannot_resolve_references", "cannot_create_external_resource", "cannot_observe_external_resource", "cannot_update_external_resource", "cannot_delete_external_resource", "reference_resolution_failed", "other"] | map("ready_seen_reason_" + .))
+               + (["absent", "reconcile_success", "reconcile_error", "creating", "deleting", "unavailable", "late_initialize", "async_operation", "waiting", "reconcile_paused", "cannot_initialize", "cannot_connect_provider", "cannot_get_reference", "cannot_resolve_references", "cannot_create_external_resource", "cannot_observe_external_resource", "cannot_update_external_resource", "cannot_delete_external_resource", "reference_resolution_failed", "other"] | map("synced_seen_reason_" + .))
+               + (["absent", "not_applicable", "authentication", "authorization", "rate_limited", "timeout", "transport", "remote_server", "not_found", "conflict", "validation", "reference", "unsupported", "unknown"] | map("ready_seen_message_" + .))
+               + (["absent", "not_applicable", "authentication", "authorization", "rate_limited", "timeout", "transport", "remote_server", "not_found", "conflict", "validation", "reference", "unsupported", "unknown"] | map("synced_seen_message_" + .))
               ) | index($field)) != null)
      | [$field,
         (if (.sum | type) == "number" and (.sum | isfinite) and .sum >= 0 and .sum == (.sum | floor) and .sum <= 1000000 then (.sum | tostring)

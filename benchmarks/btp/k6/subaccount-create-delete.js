@@ -45,7 +45,8 @@ function recordPhase(kind, phase, startedAt, outcome, reason, event) {
 
 const CREDENTIAL_OBSERVATION_VALUES = {
   conditionStatus: ['true', 'false', 'absent', 'other'],
-  conditionReason: ['absent', 'reconcile_success', 'reconcile_error', 'creating', 'deleting', 'unavailable', 'late_initialize', 'async_operation', 'waiting', 'reconcile_paused', 'cannot_initialize', 'cannot_connect_provider', 'cannot_get_reference', 'reference_resolution_failed', 'other'],
+  conditionReason: ['absent', 'reconcile_success', 'reconcile_error', 'creating', 'deleting', 'unavailable', 'late_initialize', 'async_operation', 'waiting', 'reconcile_paused', 'cannot_initialize', 'cannot_connect_provider', 'cannot_get_reference', 'cannot_resolve_references', 'cannot_create_external_resource', 'cannot_observe_external_resource', 'cannot_update_external_resource', 'cannot_delete_external_resource', 'reference_resolution_failed', 'other'],
+  messageCategory: ['absent', 'not_applicable', 'authentication', 'authorization', 'rate_limited', 'timeout', 'transport', 'remote_server', 'not_found', 'conflict', 'validation', 'reference', 'unsupported', 'unknown'],
   generation: ['current', 'stale', 'ahead', 'not_reported', 'invalid', 'unavailable', 'other'],
   transitionAge: ['absent', 'invalid', 'future', 'under_1m', '1_to_5m', '5_to_10m', 'over_10m', 'other'],
   presence: ['present', 'absent'],
@@ -65,6 +66,7 @@ function recordCredentialReadinessObservation(observation) {
       reason: value.reason == null ? 'absent' : safeValue('conditionReason', value.reason),
       generation: value.generation == null ? 'unavailable' : safeValue('generation', value.generation),
       transitionAge: value.transitionAge == null ? 'absent' : safeValue('transitionAge', value.transitionAge),
+      messageCategory: value.messageCategory == null ? 'absent' : safeValue('messageCategory', value.messageCategory),
     };
   };
   const safe = {
@@ -83,13 +85,37 @@ function recordCredentialReadinessObservation(observation) {
     pollErrors: Array.isArray(observation?.pollErrors)
       ? [...new Set(observation.pollErrors.filter((value) => CREDENTIAL_OBSERVATION_VALUES.pollError.includes(value)))].sort()
       : [],
+    history: observation?.history && typeof observation.history === 'object' ? observation.history : {},
+  };
+  const safeHistory = (key, allowed) => Array.isArray(safe.history[key])
+    ? [...new Set(safe.history[key].filter((value) => allowed.includes(value)))].sort()
+    : [];
+  const history = {
+    readyStatuses: safeHistory('readyStatuses', CREDENTIAL_OBSERVATION_VALUES.conditionStatus),
+    readyReasons: safeHistory('readyReasons', CREDENTIAL_OBSERVATION_VALUES.conditionReason),
+    readyMessageCategories: safeHistory('readyMessageCategories', CREDENTIAL_OBSERVATION_VALUES.messageCategory),
+    syncedStatuses: safeHistory('syncedStatuses', CREDENTIAL_OBSERVATION_VALUES.conditionStatus),
+    syncedReasons: safeHistory('syncedReasons', CREDENTIAL_OBSERVATION_VALUES.conditionReason),
+    syncedMessageCategories: safeHistory('syncedMessageCategories', CREDENTIAL_OBSERVATION_VALUES.messageCategory),
+    atProviderID: safeHistory('atProviderID', CREDENTIAL_OBSERVATION_VALUES.presence),
+    externalName: safeHistory('externalName', CREDENTIAL_OBSERVATION_VALUES.presence),
   };
 
   const categories = [
     `ready_${safe.ready.status}`, `ready_reason_${safe.ready.reason}`,
     `ready_generation_${safe.ready.generation}`, `ready_transition_age_${safe.ready.transitionAge}`,
+    `ready_message_${safe.ready.messageCategory}`,
     `synced_${safe.synced.status}`, `synced_reason_${safe.synced.reason}`,
     `synced_generation_${safe.synced.generation}`, `synced_transition_age_${safe.synced.transitionAge}`,
+    `synced_message_${safe.synced.messageCategory}`,
+    ...history.readyStatuses.map((value) => `ready_seen_status_${value}`),
+    ...history.readyReasons.map((value) => `ready_seen_reason_${value}`),
+    ...history.readyMessageCategories.map((value) => `ready_seen_message_${value}`),
+    ...history.syncedStatuses.map((value) => `synced_seen_status_${value}`),
+    ...history.syncedReasons.map((value) => `synced_seen_reason_${value}`),
+    ...history.syncedMessageCategories.map((value) => `synced_seen_message_${value}`),
+    ...history.atProviderID.map((value) => `at_provider_id_seen_${value}`),
+    ...history.externalName.map((value) => `external_name_seen_${value}`),
     `subaccount_id_${safe.subaccountID}`, `at_provider_id_${safe.atProviderID}`,
     `at_provider_name_${safe.atProviderName}`, `at_provider_subaccount_id_${safe.atProviderSubaccountID}`,
     `certificate_received_${safe.certificateReceived}`, `credential_type_${safe.credentialType}`,
@@ -115,11 +141,13 @@ function recordCredentialReadinessObservation(observation) {
     `      reasonCategory: ${safe.ready.reason}`,
     `      observedGeneration: ${safe.ready.generation}`,
     `      transitionAge: ${safe.ready.transitionAge}`,
+    `      messageCategory: ${safe.ready.messageCategory}`,
     '    - type: Synced',
     `      status: ${safe.synced.status}`,
     `      reasonCategory: ${safe.synced.reason}`,
     `      observedGeneration: ${safe.synced.generation}`,
     `      transitionAge: ${safe.synced.transitionAge}`,
+    `      messageCategory: ${safe.synced.messageCategory}`,
     '  atProvider:',
     `    id: ${safe.atProviderID === 'present' ? '<present>' : '<absent>'}`,
     `    name: ${safe.atProviderName === 'present' ? '<present>' : '<absent>'}`,
@@ -127,6 +155,15 @@ function recordCredentialReadinessObservation(observation) {
     `    certificateReceived: ${safe.certificateReceived === 'present' ? '<present>' : '<absent>'}`,
     `    credentialType: ${safe.credentialType}`,
     `    externalName: ${safe.externalName}`,
+    'history:',
+    `  readyStatusesSeen: [${history.readyStatuses.join(', ')}]`,
+    `  readyReasonsSeen: [${history.readyReasons.join(', ')}]`,
+    `  readyMessageCategoriesSeen: [${history.readyMessageCategories.join(', ')}]`,
+    `  syncedStatusesSeen: [${history.syncedStatuses.join(', ')}]`,
+    `  syncedReasonsSeen: [${history.syncedReasons.join(', ')}]`,
+    `  syncedMessageCategoriesSeen: [${history.syncedMessageCategories.join(', ')}]`,
+    `  atProviderIDPresenceSeen: [${history.atProviderID.join(', ')}]`,
+    `  externalNamePresenceSeen: [${history.externalName.join(', ')}]`,
     'polling:',
     `  requestCount: ${safe.pollCount}`,
     `  errorCount: ${safe.pollErrorCount}`,
