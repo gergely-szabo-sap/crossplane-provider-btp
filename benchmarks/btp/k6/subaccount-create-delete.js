@@ -44,42 +44,63 @@ function recordPhase(kind, phase, startedAt, outcome, reason, event) {
 }
 
 const CREDENTIAL_OBSERVATION_VALUES = {
-  condition: ['true', 'false', 'absent', 'other'],
-  subaccountID: ['present', 'absent'],
+  conditionStatus: ['true', 'false', 'absent', 'other'],
+  conditionReason: ['absent', 'reconcile_success', 'reconcile_error', 'creating', 'deleting', 'unavailable', 'late_initialize', 'async_operation', 'waiting', 'reconcile_paused', 'cannot_initialize', 'cannot_connect_provider', 'cannot_get_reference', 'reference_resolution_failed', 'other'],
+  generation: ['current', 'stale', 'ahead', 'not_reported', 'invalid', 'unavailable', 'other'],
+  transitionAge: ['absent', 'invalid', 'future', 'under_1m', '1_to_5m', '5_to_10m', 'over_10m', 'other'],
+  presence: ['present', 'absent'],
+  credentialType: ['secrets', 'certificates', 'absent', 'other'],
+  pollCount: ['1', '2_to_10', '11_to_60', '61_to_600', 'over_600'],
+  pollErrorCount: ['0', '1', '2_to_5', 'over_5'],
   lastPoll: ['ok', 'not_found', 'unauthorized', 'forbidden', 'other_error'],
   pollError: ['not_found', 'unauthorized', 'forbidden', 'other_error'],
 };
 
 function recordCredentialReadinessObservation(observation) {
   const safeValue = (group, value, fallback = 'other') => CREDENTIAL_OBSERVATION_VALUES[group].includes(value) ? value : fallback;
+  const condition = (type) => {
+    const value = observation?.[type] || {};
+    return {
+      status: safeValue('conditionStatus', value.status),
+      reason: value.reason == null ? 'absent' : safeValue('conditionReason', value.reason),
+      generation: value.generation == null ? 'unavailable' : safeValue('generation', value.generation),
+      transitionAge: value.transitionAge == null ? 'absent' : safeValue('transitionAge', value.transitionAge),
+    };
+  };
   const safe = {
-    ready: safeValue('condition', observation?.ready),
-    synced: safeValue('condition', observation?.synced),
-    subaccountID: safeValue('subaccountID', observation?.subaccountID, 'absent'),
+    ready: condition('ready'),
+    synced: condition('synced'),
+    subaccountID: safeValue('presence', observation?.subaccountID, 'absent'),
+    atProviderID: safeValue('presence', observation?.atProviderID, 'absent'),
+    atProviderName: safeValue('presence', observation?.atProviderName, 'absent'),
+    atProviderSubaccountID: safeValue('presence', observation?.atProviderSubaccountID, 'absent'),
+    certificateReceived: safeValue('presence', observation?.certificateReceived, 'absent'),
+    credentialType: safeValue('credentialType', observation?.credentialType, 'other'),
+    externalName: safeValue('presence', observation?.externalName, 'absent'),
+    pollCount: safeValue('pollCount', observation?.pollCountBucket, 'over_600'),
+    pollErrorCount: safeValue('pollErrorCount', observation?.pollErrorCountBucket, 'over_5'),
     lastPoll: safeValue('lastPoll', observation?.lastPoll, 'other_error'),
     pollErrors: Array.isArray(observation?.pollErrors)
       ? [...new Set(observation.pollErrors.filter((value) => CREDENTIAL_OBSERVATION_VALUES.pollError.includes(value)))].sort()
       : [],
   };
 
-  for (const [field, value] of [
-    ['ready', safe.ready],
-    ['synced', safe.synced],
-    ['subaccount_id', safe.subaccountID],
-    ['poll_last', safe.lastPoll],
-  ]) {
-    xp.recordMeasurementPhase('credential_readiness', `${field}_${value}`, 'SubaccountApiCredential');
+  const categories = [
+    `ready_${safe.ready.status}`, `ready_reason_${safe.ready.reason}`,
+    `ready_generation_${safe.ready.generation}`, `ready_transition_age_${safe.ready.transitionAge}`,
+    `synced_${safe.synced.status}`, `synced_reason_${safe.synced.reason}`,
+    `synced_generation_${safe.synced.generation}`, `synced_transition_age_${safe.synced.transitionAge}`,
+    `subaccount_id_${safe.subaccountID}`, `at_provider_id_${safe.atProviderID}`,
+    `at_provider_name_${safe.atProviderName}`, `at_provider_subaccount_id_${safe.atProviderSubaccountID}`,
+    `certificate_received_${safe.certificateReceived}`, `credential_type_${safe.credentialType}`,
+    `external_name_${safe.externalName}`, `poll_count_${safe.pollCount}`,
+    `poll_error_count_${safe.pollErrorCount}`, `poll_last_${safe.lastPoll}`,
+    ...(safe.pollErrors.length > 0 ? safe.pollErrors.map((value) => `poll_error_${value}_seen`) : ['poll_error_none_seen']),
+  ];
+  for (const category of categories) {
+    xp.recordMeasurementPhase('credential_readiness', category, 'SubaccountApiCredential');
   }
 
-  if (safe.pollErrors.length === 0) {
-    xp.recordMeasurementPhase('credential_readiness', 'poll_error_none_seen', 'SubaccountApiCredential');
-  } else {
-    for (const error of safe.pollErrors) {
-      xp.recordMeasurementPhase('credential_readiness', `poll_error_${error}_seen`, 'SubaccountApiCredential');
-    }
-  }
-
-  const errorCategories = safe.pollErrors.length > 0 ? safe.pollErrors : ['none'];
   console.log([
     '[XP-OBS] Allowlisted SubaccountApiCredential observation (sanitized YAML; not a full resource dump):',
     'apiVersion: security.btp.sap.crossplane.io/v1alpha1',
@@ -90,13 +111,28 @@ function recordCredentialReadinessObservation(observation) {
     'status:',
     '  conditions:',
     '    - type: Ready',
-    `      status: ${safe.ready}`,
+    `      status: ${safe.ready.status}`,
+    `      reasonCategory: ${safe.ready.reason}`,
+    `      observedGeneration: ${safe.ready.generation}`,
+    `      transitionAge: ${safe.ready.transitionAge}`,
     '    - type: Synced',
-    `      status: ${safe.synced}`,
+    `      status: ${safe.synced.status}`,
+    `      reasonCategory: ${safe.synced.reason}`,
+    `      observedGeneration: ${safe.synced.generation}`,
+    `      transitionAge: ${safe.synced.transitionAge}`,
+    '  atProvider:',
+    `    id: ${safe.atProviderID === 'present' ? '<present>' : '<absent>'}`,
+    `    name: ${safe.atProviderName === 'present' ? '<present>' : '<absent>'}`,
+    `    subaccountId: ${safe.atProviderSubaccountID === 'present' ? '<present>' : '<absent>'}`,
+    `    certificateReceived: ${safe.certificateReceived === 'present' ? '<present>' : '<absent>'}`,
+    `    credentialType: ${safe.credentialType}`,
+    `    externalName: ${safe.externalName}`,
     'polling:',
+    `  requestCount: ${safe.pollCount}`,
+    `  errorCount: ${safe.pollErrorCount}`,
     `  lastResult: ${safe.lastPoll}`,
     '  errorCategories:',
-    ...errorCategories.map((category) => `    - ${category}`),
+    ...(safe.pollErrors.length > 0 ? safe.pollErrors : ['none']).map((category) => `    - ${category}`),
   ].join('\n'));
 }
 
