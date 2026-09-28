@@ -93,12 +93,6 @@ metrics:
         scope: cluster
         event_namespaces: [default]
         name_prefix: xp-btp-bench-dirent-
-      - environment: local
-        api_version: security.btp.sap.crossplane.io/v1alpha1
-        kind: SubaccountApiCredential
-        scope: cluster
-        event_namespaces: [default]
-        name_prefix: xp-btp-bench-api-
 
 output:
   directory: ./results
