@@ -76,8 +76,13 @@ const success = wait(createHarness(() => null), () => {
   };
 });
 assert.deepEqual(JSON.parse(JSON.stringify(success.observation)), {
-  ready: { status: 'true', reason: 'reconcile_success', generation: 'current', transitionAge: 'under_1m' },
-  synced: { status: 'true', reason: 'reconcile_success', generation: 'current', transitionAge: 'under_1m' },
+  ready: { status: 'true', reason: 'reconcile_success', generation: 'current', transitionAge: 'under_1m', messageCategory: 'not_applicable' },
+  synced: { status: 'true', reason: 'reconcile_success', generation: 'current', transitionAge: 'under_1m', messageCategory: 'not_applicable' },
+  history: {
+    readyStatuses: ['false', 'true'], readyReasons: ['other', 'reconcile_success'], readyMessageCategories: ['not_applicable', 'unknown'],
+    syncedStatuses: ['true'], syncedReasons: ['absent', 'reconcile_success'], syncedMessageCategories: ['not_applicable'],
+    atProviderID: ['present'], externalName: ['present'],
+  },
   subaccountID: 'present', atProviderID: 'present', atProviderName: 'present',
   atProviderSubaccountID: 'present', certificateReceived: 'present', credentialType: 'secrets',
   externalName: 'present', pollCountBucket: '2_to_10', pollErrorCountBucket: '0',
@@ -88,14 +93,19 @@ const timeoutContext = createHarness(() => null);
 const timedOut = wait(timeoutContext, () => ({
   spec: { forProvider: { subaccountId: 'private-subaccount-id' } },
   status: { conditions: [
-    { type: 'Ready', status: 'False', reason: 'private reason', message: 'private condition message' },
+    { type: 'Ready', status: 'False', reason: 'private reason', message: '403 Forbidden: private credential details' },
     { type: 'Synced', status: 'True', message: 'private sync message' },
   ] },
 }));
 assert.equal(timedOut.error?.name, 'TimeoutError');
 assert.deepEqual(JSON.parse(JSON.stringify(timedOut.observation)), {
-  ready: { status: 'false', reason: 'other', generation: 'unavailable', transitionAge: 'absent' },
-  synced: { status: 'true', reason: 'absent', generation: 'unavailable', transitionAge: 'absent' },
+  ready: { status: 'false', reason: 'other', generation: 'unavailable', transitionAge: 'absent', messageCategory: 'authorization' },
+  synced: { status: 'true', reason: 'absent', generation: 'unavailable', transitionAge: 'absent', messageCategory: 'not_applicable' },
+  history: {
+    readyStatuses: ['false'], readyReasons: ['other'], readyMessageCategories: ['authorization'],
+    syncedStatuses: ['true'], syncedReasons: ['absent'], syncedMessageCategories: ['not_applicable'],
+    atProviderID: ['absent'], externalName: ['absent'],
+  },
   subaccountID: 'present', atProviderID: 'absent', atProviderName: 'absent',
   atProviderSubaccountID: 'absent', certificateReceived: 'absent', credentialType: 'absent',
   externalName: 'absent', pollCountBucket: '2_to_10', pollErrorCountBucket: '0',
@@ -110,8 +120,13 @@ const pollingFailure = wait(pollingContext, () => {
 });
 assert.equal(pollingFailure.error?.name, 'TimeoutError');
 assert.deepEqual(JSON.parse(JSON.stringify(pollingFailure.observation)), {
-  ready: { status: 'absent', reason: 'absent', generation: 'unavailable', transitionAge: 'absent' },
-  synced: { status: 'absent', reason: 'absent', generation: 'unavailable', transitionAge: 'absent' },
+  ready: { status: 'absent', reason: 'absent', generation: 'unavailable', transitionAge: 'absent', messageCategory: 'absent' },
+  synced: { status: 'absent', reason: 'absent', generation: 'unavailable', transitionAge: 'absent', messageCategory: 'absent' },
+  history: {
+    readyStatuses: [], readyReasons: [], readyMessageCategories: [],
+    syncedStatuses: [], syncedReasons: [], syncedMessageCategories: [],
+    atProviderID: [], externalName: [],
+  },
   subaccountID: 'absent', atProviderID: 'absent', atProviderName: 'absent',
   atProviderSubaccountID: 'absent', certificateReceived: 'absent', credentialType: 'absent',
   externalName: 'absent', pollCountBucket: '2_to_10', pollErrorCountBucket: '2_to_5',
@@ -120,7 +135,7 @@ assert.deepEqual(JSON.parse(JSON.stringify(pollingFailure.observation)), {
 
 for (const result of [success, timedOut, pollingFailure]) {
   const serialized = JSON.stringify(result.observation);
-  for (const secret of ['private-resource-name', 'private-subaccount-id', 'private reason', 'private condition message', 'private sync message', 'private token', 'server response']) {
+  for (const secret of ['private-resource-name', 'private-subaccount-id', 'private reason', 'private credential details', 'private sync message', 'private token', 'server response']) {
     assert.ok(!serialized.includes(secret), `observation leaked ${secret}`);
   }
 }

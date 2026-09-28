@@ -30,8 +30,13 @@ function harness({ createFailure, readyFailure, readyTimeout = false, deleteFail
       ready.push(kind);
       if (kind === 'SubaccountApiCredential' && opts.onObservation) {
         const observation = credentialObservation || {
-          ready: { status: readyFailure === kind ? 'false' : 'true', reason: 'reconcile_success', generation: 'current', transitionAge: 'under_1m' },
-          synced: { status: 'true', reason: 'reconcile_success', generation: 'current', transitionAge: 'under_1m' },
+          ready: { status: readyFailure === kind ? 'false' : 'true', reason: 'reconcile_success', generation: 'current', transitionAge: 'under_1m', messageCategory: 'not_applicable' },
+          synced: { status: 'true', reason: 'reconcile_success', generation: 'current', transitionAge: 'under_1m', messageCategory: 'not_applicable' },
+          history: {
+            readyStatuses: [readyFailure === kind ? 'false' : 'true'], readyReasons: ['reconcile_success'], readyMessageCategories: ['not_applicable'],
+            syncedStatuses: ['true'], syncedReasons: ['reconcile_success'], syncedMessageCategories: ['not_applicable'],
+            atProviderID: ['present'], externalName: ['present'],
+          },
           subaccountID: 'present', atProviderID: 'present', atProviderName: 'present',
           atProviderSubaccountID: 'present', certificateReceived: 'absent', credentialType: 'secrets',
           externalName: 'present', pollCountBucket: '11_to_60', pollErrorCountBucket: '0',
@@ -96,12 +101,14 @@ assert.ok(readinessLog?.includes('kind: SubaccountApiCredential'));
 assert.ok(readinessLog?.includes('subaccountId: <present>'));
 assert.ok(readinessLog?.includes('status: true'));
 assert.ok(readinessLog?.includes('reasonCategory: reconcile_success'));
+assert.ok(readinessLog?.includes('messageCategory: not_applicable'));
+assert.ok(readinessLog?.includes('readyStatusesSeen: [true]'));
 assert.ok(readinessLog?.includes('observedGeneration: current'));
 assert.ok(readinessLog?.includes('id: <present>'));
 assert.ok(readinessLog?.includes('requestCount: 11_to_60'));
 assert.ok(readinessLog?.includes('lastResult: ok'));
 assert.ok(!readinessLog?.includes('benchmark@example.invalid'));
-for (const field of ['ready_true', 'ready_reason_reconcile_success', 'ready_generation_current', 'ready_transition_age_under_1m', 'synced_true', 'subaccount_id_present', 'at_provider_id_present', 'credential_type_secrets', 'poll_count_11_to_60', 'poll_last_ok', 'poll_error_count_0', 'poll_error_none_seen']) {
+for (const field of ['ready_true', 'ready_reason_reconcile_success', 'ready_generation_current', 'ready_transition_age_under_1m', 'ready_message_not_applicable', 'ready_seen_status_true', 'synced_true', 'synced_seen_reason_reconcile_success', 'subaccount_id_present', 'at_provider_id_present', 'at_provider_id_seen_present', 'external_name_seen_present', 'credential_type_secrets', 'poll_count_11_to_60', 'poll_last_ok', 'poll_error_count_0', 'poll_error_none_seen']) {
   assert.ok(happy.phaseEvents.some((x) => x.phase === 'credential_readiness' && x.event === field && x.resourceKind === 'SubaccountApiCredential'), `missing safe credential observation ${field}`);
 }
 assert.equal(new Set(happy.created.map((x) => x.metadata.name)).size, kinds.length);
@@ -129,8 +136,13 @@ assert.throws(() => credentialTimeout.run(), /create\/readiness failed \(timeout
 assert.ok(credentialTimeout.phaseEvents.some((x) => x.phase === 'credential_readiness' && x.event === 'ready_false' && x.resourceKind === 'SubaccountApiCredential'));
 
 const hostileObservation = harness({ credentialObservation: {
-  ready: { status: 'private condition message', reason: 'private condition reason', generation: 'private generation', transitionAge: 'private timestamp' },
-  synced: { status: 'true', reason: 'ReconcileSuccess', generation: 'current', transitionAge: 'under_1m' },
+  ready: { status: 'private condition message', reason: 'private condition reason', generation: 'private generation', transitionAge: 'private timestamp', messageCategory: 'private message category' },
+  synced: { status: 'true', reason: 'ReconcileSuccess', generation: 'current', transitionAge: 'under_1m', messageCategory: 'not_applicable' },
+  history: {
+    readyStatuses: ['private condition message'], readyReasons: ['private condition reason'], readyMessageCategories: ['private error message'],
+    syncedStatuses: ['true'], syncedReasons: ['ReconcileSuccess'], syncedMessageCategories: ['not_applicable'],
+    atProviderID: ['private external id'], externalName: ['private external name'],
+  },
   subaccountID: 'private-subaccount-id', atProviderID: 'private external id',
   atProviderName: 'private name', atProviderSubaccountID: 'private parent id',
   certificateReceived: 'private certificate', credentialType: 'private credential type',
@@ -143,7 +155,7 @@ for (const event of hostileObservation.phaseEvents.filter((x) => x.phase === 'cr
   assert.ok(!event.event.includes('private'), `unsafe readiness value escaped into metric tag: ${event.event}`);
 }
 const hostileLog = hostileObservation.logs.find((line) => line.includes('Allowlisted SubaccountApiCredential observation'));
-for (const secret of ['private condition message', 'private condition reason', 'private generation', 'private timestamp', 'private-subaccount-id', 'private external id', 'private name', 'private parent id', 'private certificate', 'private credential type', 'private external name', 'private count', 'private response', 'private error text']) {
+for (const secret of ['private condition message', 'private condition reason', 'private generation', 'private timestamp', 'private-subaccount-id', 'private external id', 'private name', 'private parent id', 'private certificate', 'private credential type', 'private external name', 'private count', 'private response', 'private error text', 'private message category', 'private error message']) {
   assert.ok(!hostileLog?.includes(secret), `unsafe readiness value escaped into log: ${secret}`);
 }
 assert.ok(hostileObservation.phaseEvents.some((x) => x.event === 'ready_other'));

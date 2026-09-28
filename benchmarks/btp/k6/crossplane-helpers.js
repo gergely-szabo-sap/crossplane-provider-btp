@@ -389,10 +389,30 @@ const SAFE_CONDITION_REASONS = {
   ReferenceResolutionFailed: 'reference_resolution_failed',
 };
 
+function safeConditionMessageCategory(condition) {
+  if (!condition) return 'absent';
+  if (condition.status !== 'False' && condition.status !== false) return 'not_applicable';
+  if (typeof condition.message !== 'string' || condition.message.trim() === '') return 'absent';
+
+  const text = condition.message.toLowerCase();
+  if (/(?:^|\D)(?:401|unauthorized)(?:\D|$)|authentication failed|invalid credentials/.test(text)) return 'authentication';
+  if (/(?:^|\D)(?:403|forbidden)(?:\D|$)|permission denied|not authorized/.test(text)) return 'authorization';
+  if (/(?:^|\D)429(?:\D|$)|too many requests|rate.?limit/.test(text)) return 'rate_limited';
+  if (/timeout|timed out|deadline exceeded/.test(text)) return 'timeout';
+  if (/x509|tls|connection refused|no such host|dial tcp|transport/.test(text)) return 'transport';
+  if (/(?:^|\D)5\d\d(?:\D|$)|internal server error|service unavailable/.test(text)) return 'remote_server';
+  if (/(?:^|\D)404(?:\D|$)|not found/.test(text)) return 'not_found';
+  if (/(?:^|\D)409(?:\D|$)|conflict|already exists/.test(text)) return 'conflict';
+  if (/(?:^|\D)400(?:\D|$)|invalid|validation/.test(text)) return 'validation';
+  if (/reference|cannot resolve/.test(text)) return 'reference';
+  if (/unsupported|not supported/.test(text)) return 'unsupported';
+  return 'unknown';
+}
+
 function safeConditionObservation(resource, type) {
   const conditions = Array.isArray(resource?.status?.conditions) ? resource.status.conditions : [];
   const condition = conditions.find((candidate) => candidate?.type === type);
-  if (!condition) return { status: 'absent', reason: 'absent', generation: 'unavailable', transitionAge: 'absent' };
+  if (!condition) return { status: 'absent', reason: 'absent', generation: 'unavailable', transitionAge: 'absent', messageCategory: 'absent' };
 
   const status = condition.status === 'True' || condition.status === true
     ? 'true'
@@ -430,7 +450,13 @@ function safeConditionObservation(resource, type) {
       else transitionAge = 'over_10m';
     }
   }
-  return { status, reason, generation: generationState, transitionAge };
+  return {
+    status,
+    reason,
+    generation: generationState,
+    transitionAge,
+    messageCategory: safeConditionMessageCategory(condition),
+  };
 }
 
 function safePollingErrorCategory(error) {
@@ -446,7 +472,7 @@ function safePollingErrorCategory(error) {
   return 'other_error';
 }
 
-function safeReadinessObservation(resource, lastPoll, pollErrors, pollCount, pollErrorCount) {
+function safeReadinessObservation(resource, lastPoll, pollErrors, pollCount, pollErrorCount, history) {
   const subaccountID = resource?.spec?.forProvider?.subaccountId;
   const atProvider = resource?.status?.atProvider || {};
   const externalName = resource?.metadata?.annotations?.['crossplane.io/external-name'];
@@ -454,6 +480,7 @@ function safeReadinessObservation(resource, lastPoll, pollErrors, pollCount, pol
   return {
     ready: safeConditionObservation(resource, 'Ready'),
     synced: safeConditionObservation(resource, 'Synced'),
+    history: Object.fromEntries(Object.entries(history).map(([key, values]) => [key, [...values].sort()])),
     subaccountID: typeof subaccountID === 'string' && subaccountID.trim() !== '' ? 'present' : 'absent',
     atProviderID: typeof atProvider.id === 'string' && atProvider.id.trim() !== '' ? 'present' : 'absent',
     atProviderName: typeof atProvider.name === 'string' && atProvider.name.trim() !== '' ? 'present' : 'absent',
@@ -488,10 +515,26 @@ export function waitForReady(kind, name, opts = {}) {
   let observationEmitted = false;
   let pollCount = 0;
   let pollErrorCount = 0;
+  const history = {
+    readyStatuses: new Set(), readyReasons: new Set(), readyMessageCategories: new Set(),
+    syncedStatuses: new Set(), syncedReasons: new Set(), syncedMessageCategories: new Set(),
+    atProviderID: new Set(), externalName: new Set(),
+  };
+  const observeHistory = (resource) => {
+    for (const [type, prefix] of [['Ready', 'ready'], ['Synced', 'synced']]) {
+      const condition = safeConditionObservation(resource, type);
+      history[`${prefix}Statuses`].add(condition.status);
+      history[`${prefix}Reasons`].add(condition.reason);
+      history[`${prefix}MessageCategories`].add(condition.messageCategory);
+    }
+    const fields = safeReadinessObservation(resource, lastPoll, pollErrors, pollCount, pollErrorCount, {});
+    history.atProviderID.add(fields.atProviderID);
+    history.externalName.add(fields.externalName);
+  };
   const emitObservation = (resource) => {
     if (observationEmitted || typeof opts.onObservation !== 'function') return;
     observationEmitted = true;
-    opts.onObservation(safeReadinessObservation(resource, lastPoll, pollErrors, pollCount, pollErrorCount));
+    opts.onObservation(safeReadinessObservation(resource, lastPoll, pollErrors, pollCount, pollErrorCount, history));
   };
 
   while (Date.now() < deadline) {
@@ -501,6 +544,7 @@ export function waitForReady(kind, name, opts = {}) {
       resource = client.get(groupKind(kind, apiVersion), name, ns);
       lastResource = resource;
       lastPoll = 'ok';
+      observeHistory(resource);
     } catch (e) {
       lastPoll = safePollingErrorCategory(e);
       pollErrors.add(lastPoll);
