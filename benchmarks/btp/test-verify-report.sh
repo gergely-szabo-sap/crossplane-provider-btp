@@ -9,6 +9,8 @@ jq '.archives[0].k6_metrics += [
   {"source":"raw_k6","metric":"xp_measurement_phase","metric_type":"counter","sample_count":1,"sum":1,"tags":{"resource_kind":"SubaccountApiCredential","stage":"credential_readiness","field":"poll_last_forbidden"}},
   {"source":"raw_k6","metric":"xp_measurement_phase","metric_type":"counter","sample_count":1,"sum":1,"tags":{"resource_kind":"SubaccountApiCredential","stage":"credential_readiness","field":"ready_reason_reconcile_error"}},
   {"source":"raw_k6","metric":"xp_measurement_phase","metric_type":"counter","sample_count":1,"sum":1,"tags":{"resource_kind":"SubaccountApiCredential","stage":"credential_readiness","field":"at_provider_id_absent"}},
+  {"source":"raw_k6","metric":"xp_measurement_phase","metric_type":"counter","sample_count":1,"sum":1,"tags":{"resource_kind":"SubaccountApiCredential","stage":"credential_readiness","field":"synced_message_authorization"}},
+  {"source":"raw_k6","metric":"xp_measurement_phase","metric_type":"counter","sample_count":1,"sum":1,"tags":{"resource_kind":"SubaccountApiCredential","stage":"credential_readiness","field":"synced_seen_message_authorization"}},
   {"source":"raw_k6","metric":"xp_measurement_phase","metric_type":"counter","sample_count":1,"sum":1,"tags":{"resource_kind":"SubaccountApiCredential","stage":"credential_readiness","field":"private-condition-message"}},
   {"source":"raw_k6","metric":"xp_measurement_phase","metric_type":"counter","sample_count":1,"sum":1,"tags":{"resource_kind":"private-resource-name","stage":"credential_readiness","field":"ready_false"}},
   {"source":"raw_k6","metric":"xp_lifecycle_phase_duration","metric_type":"trend","sample_count":1,"finite_sample_count":1,"percentiles":{"p50":600000},"tags":{"resource_kind":"DirectoryEntitlement","stage":"readiness","outcome":"timeout","reason":"timeout"}},
@@ -22,6 +24,8 @@ grep -F '| ready_false | 1 |' "$tmp/phases-summary.md" >/dev/null
 grep -F '| poll_last_forbidden | 1 |' "$tmp/phases-summary.md" >/dev/null
 grep -F '| ready_reason_reconcile_error | 1 |' "$tmp/phases-summary.md" >/dev/null
 grep -F 'category: "at_provider_id_absent"' "$tmp/phases-summary.md" >/dev/null
+grep -F '| synced_message_authorization | 1 |' "$tmp/phases-summary.md" >/dev/null
+grep -F 'category: "synced_seen_message_authorization"' "$tmp/phases-summary.md" >/dev/null
 grep -F 'category: "ready_false"' "$tmp/phases-summary.md" >/dev/null
 grep -F 'resourceKind: SubaccountApiCredential' "$tmp/phases-summary.md" >/dev/null
 if grep -F -e 'private-resource-name' -e 'private-error' -e 'private-condition-message' "$tmp/phases-summary.md" >/dev/null; then
