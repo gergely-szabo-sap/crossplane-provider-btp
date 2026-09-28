@@ -7,7 +7,7 @@ trap 'rm -rf -- "$tmp_dir"' EXIT
 mkdir -p "$tmp_dir/diagnostics"
 
 cat >"$tmp_dir/diagnostics/index.json" <<'JSON'
-{"schema_version":"0.2.0","records":12,"logs":{"complete":true},"events":{"complete":true},"warnings":[]}
+{"schema_version":"0.2.0","complete":false,"truncated":true,"records":12,"dropped_records":5,"logs":{"complete":false,"records":7,"dropped_records":2},"events":{"complete":false,"records":5,"dropped_records":3},"warnings":["diagnostic logs \"private-environment\"/provider: rate_limited","diagnostic Events \"private-environment\"/private-namespace: poll_limit","private warning secret-value"]}
 JSON
 cat >"$tmp_dir/diagnostics/events.jsonl" <<'JSONL'
 {"component":"managed-resource","type":"Warning","reason":"CannotCreateExternalResource","regarding":{"kind":"DirectoryEntitlement","name":"private-resource-name"},"content":{"message":"private event text and identifier"}}
@@ -27,9 +27,14 @@ cat >"$tmp_dir/diagnostics/logs.jsonl" <<'JSONL'
 JSONL
 
 tar --zstd -cf "$tmp_dir/fixture.tsdb.tar.zst" -C "$tmp_dir" diagnostics
-output="$("$script_dir/summarize-diagnostics.sh" "$tmp_dir/fixture.tsdb.tar.zst")"
+output="$(GITHUB_STEP_SUMMARY="$tmp_dir/summary.md" "$script_dir/summarize-diagnostics.sh" "$tmp_dir/fixture.tsdb.tar.zst")"
 
-[[ "$output" == *"logs_complete=true"* ]]
+[[ -s "$tmp_dir/summary.md" ]]
+grep -F 'Diagnostics warning: category=logs_rate_limited count=1' "$tmp_dir/summary.md" >/dev/null
+[[ "$output" == *"sidecar_complete=false, truncated=true, records=12, dropped_records=5; logs_complete=false, logs_records=7, logs_dropped=2; events_complete=false, events_records=5, events_dropped=3; warnings=3"* ]]
+[[ "$output" == *"Diagnostics warning: category=logs_rate_limited count=1"* ]]
+[[ "$output" == *"Diagnostics warning: category=events_poll_limit count=1"* ]]
+[[ "$output" == *"Diagnostics warning: category=other count=1"* ]]
 [[ "$output" == *"kind=DirectoryEntitlement type=Warning reason=CannotCreateExternalResource detail=unclassified count=1"* ]]
 [[ "$output" == *"kind=DirectoryEntitlement type=Warning reason=CannotCreateExternalResource detail=btp_http_403 count=1"* ]]
 [[ "$output" == *"kind=DirectoryEntitlement type=Warning reason=CannotResolveResourceReferences detail=resource_reference_resolution count=1"* ]]
@@ -43,16 +48,21 @@ output="$("$script_dir/summarize-diagnostics.sh" "$tmp_dir/fixture.tsdb.tar.zst"
 [[ "$output" == *"category=provider_request_timeout capture_window=capture_60s_plus count=1"* ]]
 [[ "$output" == *"category=other_provider_log capture_window=capture_60s_plus count=1"* ]]
 [[ "$output" == *"relative to the first retained diagnostic log timestamp, not benchmark start"* ]]
-for forbidden in 'private-resource-name' 'private event text' 'private-identifier' 'private-role' 'private-controller-name' 'private-directory-guid' 'private-account-id' 'private-token' 'private-id'; do
+for forbidden in 'private-resource-name' 'private event text' 'private-identifier' 'private-role' 'private-controller-name' 'private-directory-guid' 'private-account-id' 'private-token' 'private-id' 'private-environment' 'private-namespace' 'secret-value'; do
   [[ "$output" != *"$forbidden"* ]] || {
     echo "diagnostic summary leaked a private value: $forbidden" >&2
+    exit 1
+  }
+  ! grep -Fq -- "$forbidden" "$tmp_dir/summary.md" || {
+    echo "diagnostic job summary leaked a private value: $forbidden" >&2
     exit 1
   }
 done
 
 mkdir -p "$tmp_dir/empty"
 tar --zstd -cf "$tmp_dir/no-diagnostics.tar.zst" -C "$tmp_dir" empty
-output="$("$script_dir/summarize-diagnostics.sh" "$tmp_dir/no-diagnostics.tar.zst")"
+output="$(GITHUB_STEP_SUMMARY="$tmp_dir/no-diagnostics-summary.md" "$script_dir/summarize-diagnostics.sh" "$tmp_dir/no-diagnostics.tar.zst")"
 [[ "$output" == *"No diagnostics sidecar is present"* ]]
+grep -F 'No diagnostics sidecar is present' "$tmp_dir/no-diagnostics-summary.md" >/dev/null
 
 echo 'Sanitized diagnostics summary fixtures passed.'

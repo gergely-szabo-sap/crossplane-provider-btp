@@ -3,6 +3,7 @@ import { Trend } from 'k6/metrics';
 
 const xpTimeToReady = new Trend('xp_time_to_ready', true);
 const xpTimeToDelete = new Trend('xp_time_to_delete', true);
+const xpLifecyclePhaseDuration = new Trend('xp_lifecycle_phase_duration', true);
 export const options = {
   scenarios: {
     default: {
@@ -24,6 +25,22 @@ const NS = 'default';
 
 function safePart(value) {
   return String(value).toLowerCase().replace(/[^a-z0-9-]/g, '-').replace(/^-+|-+$/g, '').slice(0, 16) || 'run';
+}
+
+function failureCategory(error) {
+  if (error?.name === 'TimeoutError') return { outcome: 'timeout', reason: 'timeout' };
+  if (error?.name === 'CrossplaneError') return { outcome: 'failure', reason: 'reconcile_error' };
+  return { outcome: 'failure', reason: 'api_error' };
+}
+
+function recordPhase(kind, phase, startedAt, outcome, reason, event) {
+  xpLifecyclePhaseDuration.add(Math.max(0, Date.now() - startedAt), {
+    resource_kind: kind,
+    phase,
+    outcome,
+    reason,
+  });
+  xp.recordMeasurementPhase(phase, event, kind);
 }
 
 function resource(kind, apiVersion, name, spec, namespaced = true) {
@@ -92,26 +109,45 @@ export default function () {
       const kind = manifest.kind;
       const name = manifest.metadata.name;
       const started = Date.now();
-      xp.measureOperation('create', kind, () => {
-        client.create(manifest);
-        // Track immediately after API create, before readiness can time out.
-        created.push(manifest);
-        xp.xpResourcesCreated.add(1);
-        xp.waitForReady(kind, name, {
-          namespace: manifest.metadata.namespace || NS,
-          apiVersion: manifest.apiVersion,
-          timeout: READY_TIMEOUT,
-          requireReady: true,
+      let phase = 'create_request';
+      let phaseStarted = Date.now();
+      try {
+        xp.measureOperation('create', kind, () => {
+          xp.recordMeasurementPhase('create_request', 'requested', kind);
+          client.create(manifest);
+          // This confirms Kubernetes accepted the managed-resource object;
+          // it does not mean the corresponding BTP resource exists.
+          created.push(manifest);
+          xp.xpResourcesCreated.add(1);
+          recordPhase(kind, 'create_request', phaseStarted, 'success', 'none', 'accepted');
+
+          phase = 'readiness';
+          phaseStarted = Date.now();
+          xp.recordMeasurementPhase('readiness', 'started', kind);
+          xp.waitForReady(kind, name, {
+            namespace: manifest.metadata.namespace || NS,
+            apiVersion: manifest.apiVersion,
+            timeout: READY_TIMEOUT,
+            requireReady: true,
+          });
+          recordPhase(kind, 'readiness', phaseStarted, 'success', 'none', 'observed');
         });
-      });
-      xpTimeToReady.add(Date.now() - started, { resource_kind: kind });
+        xpTimeToReady.add(Date.now() - started, { resource_kind: kind });
+      } catch (error) {
+        const failure = failureCategory(error);
+        recordPhase(kind, phase, phaseStarted, failure.outcome, failure.reason, 'failed');
+        throw error;
+      }
     }
   } catch (error) {
-    errors.push(`create/readiness failed (${error?.name || 'error'})`);
+    errors.push(`create/readiness failed (${failureCategory(error).reason})`);
   } finally {
     for (const manifest of created.reverse()) {
       const kind = manifest.kind;
       const name = manifest.metadata.name;
+      let phase = 'delete_request';
+      let phaseStarted = Date.now();
+      xp.recordMeasurementPhase('delete_request', 'requested', kind);
       try {
         xp.deleteAndWait(kind, name, {
           namespace: manifest.metadata.namespace || NS,
@@ -119,10 +155,21 @@ export default function () {
           timeout: DELETE_TIMEOUT,
           trendMetric: xpTimeToDelete,
           trendTags: { resource_kind: kind },
+          onDeleteAccepted: () => {
+            recordPhase(kind, 'delete_request', phaseStarted, 'success', 'none', 'accepted');
+            phase = 'kubernetes_absence_wait';
+            phaseStarted = Date.now();
+            xp.recordMeasurementPhase('kubernetes_absence_wait', 'started', kind);
+          },
+          onKubernetesObjectAbsent: () => {
+            recordPhase(kind, 'kubernetes_absence_wait', phaseStarted, 'success', 'none', 'observed');
+          },
         });
       } catch (error) {
+        const failure = failureCategory(error);
+        recordPhase(kind, phase, phaseStarted, failure.outcome, failure.reason, 'failed');
         xp.xpResourcesFailed.add(1);
-        errors.push(`delete failed for owned ${kind}/${name} (${error?.name || 'error'})`);
+        errors.push(`delete failed for owned ${kind} (${failure.reason})`);
       }
     }
   }

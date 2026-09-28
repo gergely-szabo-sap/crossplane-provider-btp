@@ -9,11 +9,12 @@ const source = fs.readFileSync(new URL('./k6/subaccount-create-delete.js', `file
   .replace('export const options', 'const options')
   .replace('export default function ()', 'function workload()');
 
-function harness({ createFailure, readyFailure, deleteFailure, subaccountAdmin = 'benchmark@example.invalid', secondDirectoryAdmin = 'directory-admin-two' } = {}) {
+function harness({ createFailure, readyFailure, readyTimeout = false, deleteFailure, subaccountAdmin = 'benchmark@example.invalid', secondDirectoryAdmin = 'directory-admin-two' } = {}) {
   const created = [];
   const deleted = [];
   const ready = [];
   const metrics = [];
+  const phaseEvents = [];
   const client = {
     create(manifest) {
       if (createFailure === manifest.kind) throw new Error('simulated create failure');
@@ -25,16 +26,28 @@ function harness({ createFailure, readyFailure, deleteFailure, subaccountAdmin =
     measureOperation(_op, _kind, fn) { return fn(); },
     waitForReady(kind, name) {
       ready.push(kind);
-      if (readyFailure === kind) throw new Error('simulated readiness failure');
+      if (readyFailure === kind) {
+        const error = new Error('simulated readiness failure');
+        if (readyTimeout) error.name = 'TimeoutError';
+        throw error;
+      }
     },
-    deleteAndWait(kind, name) {
+    deleteAndWait(kind, name, opts = {}) {
       deleted.push({ kind, name });
       if (deleteFailure === kind) throw new Error('simulated delete failure');
+      opts.onDeleteAccepted?.(1);
+      opts.onKubernetesObjectAbsent?.(2);
     },
     xpResourcesCreated: { add() {} },
     xpResourcesFailed: { add() {} },
+    recordMeasurementPhase(phase, event, resourceKind) {
+      phaseEvents.push({ phase, event, resourceKind });
+    },
   };
-  class Trend { add(value, tags) { metrics.push({ value, tags }); } }
+  class Trend {
+    constructor(name) { this.name = name; }
+    add(value, tags) { metrics.push({ name: this.name, value, tags }); }
+  }
   const context = {
     xp, Trend, __ENV: {
       XP_DIADROMOS_BTP_RUN_ID: 'offline-test',
@@ -44,7 +57,7 @@ function harness({ createFailure, readyFailure, deleteFailure, subaccountAdmin =
     }, Date, console,
   };
   vm.runInNewContext(`${source}\nthis.runWorkload = workload; this.runOptions = options;`, context);
-  return { run: context.runWorkload, options: context.runOptions, created, deleted, ready, metrics };
+  return { run: context.runWorkload, options: context.runOptions, created, deleted, ready, metrics, phaseEvents };
 }
 
 const kinds = ['Subaccount', 'Directory', 'Entitlement', 'DirectoryEntitlement', 'SubaccountApiCredential'];
@@ -57,6 +70,12 @@ happy.run();
 assert.deepEqual(happy.created.map((x) => x.kind), kinds);
 assert.deepEqual(happy.ready, kinds);
 assert.deepEqual(happy.deleted.map((x) => x.kind), [...kinds].reverse());
+assert.equal(happy.metrics.filter((x) => x.name === 'xp_lifecycle_phase_duration').length, kinds.length * 4);
+assert.ok(happy.phaseEvents.some((x) => x.phase === 'create_request' && x.event === 'requested' && x.resourceKind === 'DirectoryEntitlement'));
+assert.ok(happy.phaseEvents.some((x) => x.phase === 'create_request' && x.event === 'accepted' && x.resourceKind === 'DirectoryEntitlement'));
+assert.ok(happy.phaseEvents.some((x) => x.phase === 'readiness' && x.event === 'observed' && x.resourceKind === 'DirectoryEntitlement'));
+assert.ok(happy.phaseEvents.some((x) => x.phase === 'delete_request' && x.event === 'accepted' && x.resourceKind === 'DirectoryEntitlement'));
+assert.ok(happy.phaseEvents.some((x) => x.phase === 'kubernetes_absence_wait' && x.event === 'observed' && x.resourceKind === 'DirectoryEntitlement'));
 assert.equal(new Set(happy.created.map((x) => x.metadata.name)).size, kinds.length);
 assert.deepEqual(Array.from(happy.created[1].spec.forProvider.directoryAdmins), ['benchmark@example.invalid', 'directory-admin-two']);
 assert.equal(happy.created[1].metadata.namespace, undefined, 'Directory is cluster-scoped');
@@ -75,6 +94,11 @@ assert.equal(duplicateAdmins.created.length, 0, 'reject duplicate Directory admi
 const readyFail = harness({ readyFailure: 'Entitlement' });
 assert.throws(() => readyFail.run(), /create\/readiness failed/);
 assert.deepEqual(readyFail.deleted.map((x) => x.kind), ['Entitlement', 'Directory', 'Subaccount']);
+assert.ok(readyFail.phaseEvents.some((x) => x.phase === 'readiness' && x.event === 'failed' && x.resourceKind === 'Entitlement'));
+
+const readyTimeout = harness({ readyFailure: 'DirectoryEntitlement', readyTimeout: true });
+assert.throws(() => readyTimeout.run(), /create\/readiness failed \(timeout\)/);
+assert.ok(readyTimeout.metrics.some((x) => x.name === 'xp_lifecycle_phase_duration' && x.tags.phase === 'readiness' && x.tags.outcome === 'timeout' && x.tags.reason === 'timeout'));
 
 const partialCreate = harness({ createFailure: 'Entitlement' });
 assert.throws(() => partialCreate.run(), /create\/readiness failed/);
@@ -82,6 +106,7 @@ assert.deepEqual(partialCreate.deleted.map((x) => x.kind), ['Directory', 'Subacc
 
 const deleteFail = harness({ deleteFailure: 'DirectoryEntitlement' });
 assert.throws(() => deleteFail.run(), /delete failed for owned DirectoryEntitlement/);
+assert.ok(deleteFail.phaseEvents.some((x) => x.phase === 'delete_request' && x.event === 'failed' && x.resourceKind === 'DirectoryEntitlement'));
 assert.deepEqual(deleteFail.deleted.map((x) => x.kind), [...kinds].reverse(), 'cleanup continues after a delete error');
 
 console.log('Workload manifest and cleanup fixtures passed.');

@@ -49,8 +49,34 @@ if ! contract_data="$(jq -r '
              operation_status($kind; "delete")]
           | @tsv]
      else [] end) as $rows
-  | "BASE\t\($base_errors | if length == 0 then "ok" else join(",") end)",
-    $rows[]
+  | [metrics[]
+     | select(.source == "raw_k6" and .metric == "xp_lifecycle_phase_duration" and .metric_type == "trend")
+     | (.tags.resource_kind // "") as $kind
+     | (.tags.phase // "") as $phase
+     | (.tags.outcome // "") as $outcome
+     | (.tags.reason // "") as $reason
+     | select((["create_request", "readiness", "delete_request", "kubernetes_absence_wait"] | index($phase)) != null)
+     | select((["success", "failure", "timeout"] | index($outcome)) != null)
+     | select((["none", "timeout", "reconcile_error", "api_error", "unknown"] | index($reason)) != null)
+     | select(((["Subaccount", "Directory", "Entitlement", "DirectoryEntitlement", "SubaccountApiCredential"] | index($kind)) != null))
+     | ["PHASE", $kind, $phase, $outcome, $reason,
+        (if (.sample_count | type) == "number" and .sample_count >= 0 then (.sample_count | tostring) else "0" end),
+        (if (.percentiles.p50 | type) == "number" and ((.percentiles.p50 | isfinite)) then (.percentiles.p50 | tostring) else "n/a" end)]
+     | @tsv] as $phase_rows
+  | [metrics[]
+     | select(.source == "raw_k6" and .metric == "xp_measurement_phase" and .metric_type == "counter")
+     | (.tags.resource_kind // "") as $kind
+     | (.tags.phase // "") as $phase
+     | (.tags.event // "") as $event
+     | select((["create_request", "readiness", "delete_request", "kubernetes_absence_wait"] | index($phase)) != null)
+     | select((["started", "requested", "accepted", "observed", "failed"] | index($event)) != null)
+     | select((["Subaccount", "Directory", "Entitlement", "DirectoryEntitlement", "SubaccountApiCredential"] | index($kind)) != null)
+     | ["MARKER", $kind, $phase, $event,
+        (if (.sum | type) == "number" and (.sum | isfinite) then (.sum | tostring)
+         elif (.sample_count | type) == "number" and .sample_count >= 0 then (.sample_count | tostring)
+         else "0" end)]
+     | @tsv] as $marker_rows
+  | (["BASE\t\($base_errors | if length == 0 then "ok" else join(",") end)"] + $rows + $phase_rows + $marker_rows)[]
 ' "$report" 2>/dev/null)"; then
   echo '::error title=Benchmark report contract::Report JSON could not be validated.'
   echo 'Benchmark report JSON could not be validated.' >&2
@@ -60,7 +86,25 @@ fi
 base_status=""
 summary=$'## BTP benchmark lifecycle evidence\n\n| Resource kind | Ready | Create operation | Deleted | Delete operation |\n| --- | --- | --- | --- | --- |\n'
 failures=0
-while IFS=$'\t' read -r row_type field1 field2 field3 field4; do
+phase_heading_added=false
+marker_heading_added=false
+while IFS=$'\t' read -r row_type field1 field2 field3 field4 field5 field6 field7; do
+  if [[ "$row_type" == PHASE ]]; then
+    if [[ "$phase_heading_added" == false ]]; then
+      summary+=$'\n### Workload phase durations (client-observed)\n\n| Resource kind | Phase | Outcome | Category | Samples | p50 (ms) |\n| --- | --- | --- | --- | ---: | ---: |\n'
+      phase_heading_added=true
+    fi
+    summary+="| $field1 | $field2 | $field3 | $field4 | $field5 | $field6 |"$'\n'
+    continue
+  fi
+  if [[ "$row_type" == MARKER ]]; then
+    if [[ "$marker_heading_added" == false ]]; then
+      summary+=$'\n### Workload phase markers\n\n| Resource kind | Phase | Marker | Count |\n| --- | --- | --- | ---: |\n'
+      marker_heading_added=true
+    fi
+    summary+="| $field1 | $field2 | $field3 | $field4 |"$'\n'
+    continue
+  fi
   if [[ "$row_type" == BASE ]]; then
     base_status=$field1
     if [[ "$base_status" != ok ]]; then

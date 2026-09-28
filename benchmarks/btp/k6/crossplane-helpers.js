@@ -96,12 +96,14 @@ export function measureOperation(operation, resourceKind, fn) {
   }
 }
 
-/** Record an explicitly declared script lifecycle boundary. */
-export function recordMeasurementPhase(phase, event = 'boundary') {
-  xpMeasurementPhase.add(1, {
+/** Record a script lifecycle boundary with bounded phase, event, and optional resource-kind tags. */
+export function recordMeasurementPhase(phase, event = 'boundary', resourceKind) {
+  const tags = {
     phase: boundedTag(phase),
     event: boundedTag(event),
-  });
+  };
+  if (resourceKind !== undefined) tags.resource_kind = boundedTag(resourceKind);
+  xpMeasurementPhase.add(1, tags);
 }
 
 function profileScenario(scenario, scenarioOptions, seen, points) {
@@ -323,9 +325,11 @@ export function applyAndWait(manifest, opts = {}) {
  * Delete a Crossplane resource and wait until it is fully removed.
  * @param {string} kind  - Resource kind (e.g. 'Object')
  * @param {string} name - Resource name
- * @param {object} [opts] - { namespace, timeout, interval, apiVersion, trendMetric, trendTags }
+ * @param {object} [opts] - { namespace, timeout, interval, apiVersion, trendMetric, trendTags, onDeleteAccepted, onKubernetesObjectAbsent }
  *   opts.trendMetric — optional k6 Trend metric to record time-to-deletion (ms)
  *   opts.trendTags — optional tags, including the standard resource_kind tag
+ *   opts.onDeleteAccepted — optional callback after the Kubernetes delete request succeeds
+ *   opts.onKubernetesObjectAbsent — optional callback after Kubernetes reports the object absent
  */
 export function deleteAndWait(kind, name, opts = {}) {
   return measureOperation('delete', kind, () => {
@@ -341,10 +345,12 @@ export function deleteAndWait(kind, name, opts = {}) {
     const start = Date.now();
 
     client.delete(groupKind(kind, apiVersion), name, ns);
+    opts.onDeleteAccepted?.(Date.now() - start);
 
     xpResourcesDeleted.add(1);
 
     waitForDeletion(kind, name, { namespace: ns, timeout, interval, apiVersion });
+    opts.onKubernetesObjectAbsent?.(Date.now() - start);
 
     const elapsed = Date.now() - start;
     if (opts.trendMetric) {
