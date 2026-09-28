@@ -65,6 +65,22 @@ if ! contract_data="$(jq -r '
      | @tsv] as $phase_rows
   | [metrics[]
      | select(.source == "raw_k6" and .metric == "xp_measurement_phase" and .metric_type == "counter")
+     | select(.tags.resource_kind == "SubaccountApiCredential" and .tags.stage == "credential_readiness")
+     | (.tags.field // "") as $field
+     | select((["ready_true", "ready_false", "ready_absent", "ready_other",
+               "synced_true", "synced_false", "synced_absent", "synced_other",
+               "subaccount_id_present", "subaccount_id_absent",
+               "poll_last_ok", "poll_last_not_found", "poll_last_unauthorized", "poll_last_forbidden", "poll_last_other_error",
+               "poll_error_none_seen", "poll_error_not_found_seen", "poll_error_unauthorized_seen",
+               "poll_error_forbidden_seen", "poll_error_other_error_seen"] | index($field)) != null)
+     | [$field,
+        (if (.sum | type) == "number" and (.sum | isfinite) and .sum >= 0 and .sum == (.sum | floor) and .sum <= 1000000 then (.sum | tostring)
+         elif (.sample_count | type) == "number" and .sample_count >= 0 and .sample_count == (.sample_count | floor) and .sample_count <= 1000000 then (.sample_count | tostring)
+         else "0" end)]
+     | ["CREDENTIAL", .[0], .[1]]
+     | @tsv] as $credential_rows
+  | [metrics[]
+     | select(.source == "raw_k6" and .metric == "xp_measurement_phase" and .metric_type == "counter")
      | (.tags.resource_kind // "") as $kind
      | (.tags.stage // "") as $phase
      | (.tags.field // "") as $event
@@ -76,7 +92,7 @@ if ! contract_data="$(jq -r '
          elif (.sample_count | type) == "number" and .sample_count >= 0 then (.sample_count | tostring)
          else "0" end)]
      | @tsv] as $marker_rows
-  | (["BASE\t\($base_errors | if length == 0 then "ok" else join(",") end)"] + $rows + $phase_rows + $marker_rows)[]
+  | (["BASE\t\($base_errors | if length == 0 then "ok" else join(",") end)"] + $rows + $phase_rows + $marker_rows + $credential_rows)[]
 ' "$report" 2>/dev/null)"; then
   echo '::error title=Benchmark report contract::Report JSON could not be validated.'
   echo 'Benchmark report JSON could not be validated.' >&2
@@ -88,6 +104,7 @@ summary=$'## BTP benchmark lifecycle evidence\n\n| Resource kind | Ready | Creat
 failures=0
 phase_heading_added=false
 marker_heading_added=false
+credential_heading_added=false
 while IFS=$'\t' read -r row_type field1 field2 field3 field4 field5 field6 field7; do
   if [[ "$row_type" == PHASE ]]; then
     if [[ "$phase_heading_added" == false ]]; then
@@ -103,6 +120,14 @@ while IFS=$'\t' read -r row_type field1 field2 field3 field4 field5 field6 field
       marker_heading_added=true
     fi
     summary+="| $field1 | $field2 | $field3 | $field4 |"$'\n'
+    continue
+  fi
+  if [[ "$row_type" == CREDENTIAL ]]; then
+    if [[ "$credential_heading_added" == false ]]; then
+      summary+=$'\n### SubaccountApiCredential readiness observations (allowlisted categories)\n\n| Observation | Count |\n| --- | ---: |\n'
+      credential_heading_added=true
+    fi
+    summary+="| $field1 | $field2 |"$'\n'
     continue
   fi
   if [[ "$row_type" == BASE ]]; then
