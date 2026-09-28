@@ -98,7 +98,7 @@ assert.ok(readyFail.phaseEvents.some((x) => x.phase === 'readiness' && x.event =
 
 const readyTimeout = harness({ readyFailure: 'DirectoryEntitlement', readyTimeout: true });
 assert.throws(() => readyTimeout.run(), /create\/readiness failed \(timeout\)/);
-assert.ok(readyTimeout.metrics.some((x) => x.name === 'xp_lifecycle_phase_duration' && x.tags.phase === 'readiness' && x.tags.outcome === 'timeout' && x.tags.reason === 'timeout'));
+assert.ok(readyTimeout.metrics.some((x) => x.name === 'xp_lifecycle_phase_duration' && x.tags.stage === 'readiness' && x.tags.outcome === 'timeout' && x.tags.reason === 'timeout'));
 
 const partialCreate = harness({ createFailure: 'Entitlement' });
 assert.throws(() => partialCreate.run(), /create\/readiness failed/);
