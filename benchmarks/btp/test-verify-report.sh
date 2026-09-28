@@ -4,6 +4,18 @@ root=$(cd "$(dirname "$0")" && pwd)
 tmp=$(mktemp -d)
 trap 'rm -rf "$tmp"' EXIT
 "$root/verify-report.sh" "$root/tests/report-valid.json" >/dev/null
+jq '.archives[0].k6_metrics += [
+  {"source":"raw_k6","metric":"xp_lifecycle_phase_duration","metric_type":"trend","sample_count":1,"finite_sample_count":1,"percentiles":{"p50":600000},"tags":{"resource_kind":"DirectoryEntitlement","phase":"readiness","outcome":"timeout","reason":"timeout"}},
+  {"source":"raw_k6","metric":"xp_measurement_phase","metric_type":"counter","sample_count":1,"sum":1,"tags":{"resource_kind":"DirectoryEntitlement","phase":"create_request","event":"accepted"}},
+  {"source":"raw_k6","metric":"xp_lifecycle_phase_duration","metric_type":"trend","sample_count":1,"finite_sample_count":1,"percentiles":{"p50":900000},"tags":{"resource_kind":"private-resource-name","phase":"readiness","outcome":"failure","reason":"private-error"}}
+]' "$root/tests/report-valid.json" >"$tmp/phases.json"
+GITHUB_STEP_SUMMARY="$tmp/phases-summary.md" "$root/verify-report.sh" "$tmp/phases.json" >"$tmp/phases.log"
+grep -F '| DirectoryEntitlement | readiness | timeout | timeout | 1 | 600000 |' "$tmp/phases-summary.md" >/dev/null
+grep -F '| DirectoryEntitlement | create_request | accepted | 1 |' "$tmp/phases-summary.md" >/dev/null
+if grep -F -e 'private-resource-name' -e 'private-error' "$tmp/phases-summary.md" >/dev/null; then
+  echo 'lifecycle phase summary leaked an unreviewed tag value' >&2
+  exit 1
+fi
 
 reject() {
   local name=$1 expression=$2
