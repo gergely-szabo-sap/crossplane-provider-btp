@@ -36,7 +36,7 @@ function failureCategory(error) {
 function recordPhase(kind, phase, startedAt, outcome, reason, event) {
   xpLifecyclePhaseDuration.add(Math.max(0, Date.now() - startedAt), {
     resource_kind: kind,
-    phase,
+    stage: phase,
     outcome,
     reason,
   });

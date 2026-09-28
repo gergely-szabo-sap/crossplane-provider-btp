@@ -99,8 +99,8 @@ export function measureOperation(operation, resourceKind, fn) {
 /** Record a script lifecycle boundary with bounded phase, event, and optional resource-kind tags. */
 export function recordMeasurementPhase(phase, event = 'boundary', resourceKind) {
   const tags = {
-    phase: boundedTag(phase),
-    event: boundedTag(event),
+    stage: boundedTag(phase),
+    field: boundedTag(event),
   };
   if (resourceKind !== undefined) tags.resource_kind = boundedTag(resourceKind);
   xpMeasurementPhase.add(1, tags);
