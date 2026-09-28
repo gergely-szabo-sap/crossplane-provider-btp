@@ -77,6 +77,7 @@ jobs:
           CLI_SERVER_URL: ${{ vars.CLI_SERVER_URL }}
           TECHNICAL_USER_EMAIL: ${{ secrets.TECHNICAL_USER_EMAIL }}
           SECOND_DIRECTORY_ADMIN_EMAIL: ${{ secrets.SECOND_DIRECTORY_ADMIN_EMAIL }}
+          BTP_ENV_COMPARE_HMAC_KEY: ${{ secrets.BTP_ENV_COMPARE_HMAC_KEY }}
         run: |
           set -euo pipefail
           [[ -n "$GLOBAL_ACCOUNT" ]] || {
@@ -93,6 +94,9 @@ jobs:
           }
           [[ -n "$SECOND_DIRECTORY_ADMIN_EMAIL" ]] || {
             echo '::error::Configure the SECOND_DIRECTORY_ADMIN_EMAIL secret for the benchmark environment.'; exit 1;
+          }
+          [[ "$BTP_ENV_COMPARE_HMAC_KEY" =~ ^[[:xdigit:]]{64}$ ]] || {
+            echo '::error::Configure BTP_ENV_COMPARE_HMAC_KEY as a 64-character hex GitHub secret (generate with openssl rand -hex 32).'; exit 1;
           }
           [[ "${TECHNICAL_USER_EMAIL,,}" != "${SECOND_DIRECTORY_ADMIN_EMAIL,,}" ]] || {
             echo '::error::TECHNICAL_USER_EMAIL and SECOND_DIRECTORY_ADMIN_EMAIL must identify distinct BTP users.'; exit 1;
@@ -113,6 +117,17 @@ jobs:
           set -euo pipefail
           actual="$(git rev-parse HEAD)"
           [[ "$actual" == "$EXPECTED_SHA" ]] || { echo '::error::checkout did not match reviewed SHA'; exit 1; }
+
+      - name: Compare BTP environment fingerprints (values withheld)
+        env:
+          BTP_ENV_COMPARE_HMAC_KEY: ${{ secrets.BTP_ENV_COMPARE_HMAC_KEY }}
+          BTP_TECHNICAL_USER: ${{ secrets.BTP_TECHNICAL_USER }}
+          CIS_CENTRAL_BINDING: ${{ secrets.CIS_CENTRAL_BINDING }}
+          GLOBAL_ACCOUNT: ${{ vars.GLOBAL_ACCOUNT }}
+          CLI_SERVER_URL: ${{ vars.CLI_SERVER_URL }}
+          TECHNICAL_USER_EMAIL: ${{ secrets.TECHNICAL_USER_EMAIL }}
+          SECOND_DIRECTORY_ADMIN_EMAIL: ${{ secrets.SECOND_DIRECTORY_ADMIN_EMAIL }}
+        run: python3 benchmarks/btp/fingerprint-env.py
 
       - name: Check out pinned xp-diadromos actions
         uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
