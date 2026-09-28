@@ -52,25 +52,52 @@ const CREDENTIAL_OBSERVATION_VALUES = {
 
 function recordCredentialReadinessObservation(observation) {
   const safeValue = (group, value, fallback = 'other') => CREDENTIAL_OBSERVATION_VALUES[group].includes(value) ? value : fallback;
+  const safe = {
+    ready: safeValue('condition', observation?.ready),
+    synced: safeValue('condition', observation?.synced),
+    subaccountID: safeValue('subaccountID', observation?.subaccountID, 'absent'),
+    lastPoll: safeValue('lastPoll', observation?.lastPoll, 'other_error'),
+    pollErrors: Array.isArray(observation?.pollErrors)
+      ? [...new Set(observation.pollErrors.filter((value) => CREDENTIAL_OBSERVATION_VALUES.pollError.includes(value)))].sort()
+      : [],
+  };
+
   for (const [field, value] of [
-    ['ready', safeValue('condition', observation?.ready)],
-    ['synced', safeValue('condition', observation?.synced)],
-    ['subaccount_id', safeValue('subaccountID', observation?.subaccountID, 'absent')],
-    ['poll_last', safeValue('lastPoll', observation?.lastPoll, 'other_error')],
+    ['ready', safe.ready],
+    ['synced', safe.synced],
+    ['subaccount_id', safe.subaccountID],
+    ['poll_last', safe.lastPoll],
   ]) {
     xp.recordMeasurementPhase('credential_readiness', `${field}_${value}`, 'SubaccountApiCredential');
   }
 
-  const errors = Array.isArray(observation?.pollErrors)
-    ? observation.pollErrors.filter((value) => CREDENTIAL_OBSERVATION_VALUES.pollError.includes(value))
-    : [];
-  if (errors.length === 0) {
+  if (safe.pollErrors.length === 0) {
     xp.recordMeasurementPhase('credential_readiness', 'poll_error_none_seen', 'SubaccountApiCredential');
   } else {
-    for (const error of new Set(errors)) {
+    for (const error of safe.pollErrors) {
       xp.recordMeasurementPhase('credential_readiness', `poll_error_${error}_seen`, 'SubaccountApiCredential');
     }
   }
+
+  const errorCategories = safe.pollErrors.length > 0 ? safe.pollErrors : ['none'];
+  console.log([
+    '[XP-OBS] Allowlisted SubaccountApiCredential observation (sanitized YAML; not a full resource dump):',
+    'apiVersion: security.btp.sap.crossplane.io/v1alpha1',
+    'kind: SubaccountApiCredential',
+    'spec:',
+    '  forProvider:',
+    `    subaccountId: ${safe.subaccountID === 'present' ? '<present>' : '<absent>'}`,
+    'status:',
+    '  conditions:',
+    '    - type: Ready',
+    `      status: ${safe.ready}`,
+    '    - type: Synced',
+    `      status: ${safe.synced}`,
+    'polling:',
+    `  lastResult: ${safe.lastPoll}`,
+    '  errorCategories:',
+    ...errorCategories.map((category) => `    - ${category}`),
+  ].join('\n'));
 }
 
 function resource(kind, apiVersion, name, spec, namespaced = true) {

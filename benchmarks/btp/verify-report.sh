@@ -105,6 +105,7 @@ failures=0
 phase_heading_added=false
 marker_heading_added=false
 credential_heading_added=false
+credential_yaml=""
 while IFS=$'\t' read -r row_type field1 field2 field3 field4 field5 field6 field7; do
   if [[ "$row_type" == PHASE ]]; then
     if [[ "$phase_heading_added" == false ]]; then
@@ -125,9 +126,12 @@ while IFS=$'\t' read -r row_type field1 field2 field3 field4 field5 field6 field
   if [[ "$row_type" == CREDENTIAL ]]; then
     if [[ "$credential_heading_added" == false ]]; then
       summary+=$'\n### SubaccountApiCredential readiness observations (allowlisted categories)\n\n| Observation | Count |\n| --- | ---: |\n'
+      credential_yaml=$'credentialReadiness:\n  resourceKind: SubaccountApiCredential\n  observations:\n'
       credential_heading_added=true
     fi
     summary+="| $field1 | $field2 |"$'\n'
+    credential_yaml+="    - category: \"$field1\""$'\n'
+    credential_yaml+="      count: $field2"$'\n'
     continue
   fi
   if [[ "$row_type" == BASE ]]; then
@@ -154,6 +158,12 @@ while IFS=$'\t' read -r row_type field1 field2 field3 field4 field5 field6 field
     fi
   done
 done <<<"$contract_data"
+
+if [[ "$credential_heading_added" == true ]]; then
+  summary+=$'\nSanitized YAML view of the captured readiness categories (not a full resource dump):\n\n```yaml\n'
+  summary+="$credential_yaml"
+  summary+=$'```\n'
+fi
 
 if (( failures == 0 )); then
   summary+=$'\nAll five resource lifecycles have the required report evidence.\n'
