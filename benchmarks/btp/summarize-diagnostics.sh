@@ -94,7 +94,9 @@ if has_member diagnostics/events.jsonl; then
         else "other" end;
     def safe_error_category($input):
       ($input | if type == "string" then . else "" end) as $text
-      | if ($text | test("atProvider\\.directoryFeatures: Required value"; "i")) then "directory_features_required"
+      | if ($text | test("cannot read client_secret from source|client_secret[^\\n]{0,40}(missing|not found)|missing[^\\n]{0,40}client_secret"; "i")) then "api_credential_client_secret_missing"
+      elif ($text | test("cannot reconstruct external-name: (subaccount_id|name) missing from tfstate"; "i")) then "api_credential_state_missing"
+      elif ($text | test("atProvider\\.directoryFeatures: Required value"; "i")) then "directory_features_required"
       elif ($text | test("RBAC: clusterrole[^\\n]*not found"; "i")) then "provider_rbac_role_missing"
       elif ($text | test("(cannot|failed to|unable to|could not) resolve[^\\n]{0,80}reference|reference[^\\n]{0,80}(not found|unresolved)"; "i")) then "resource_reference_resolution"
       elif ($text | test("(http|status|response)[^0-9]{0,32}401([^0-9]|$)|401 unauthorized"; "i")) then "btp_http_401"
@@ -131,6 +133,7 @@ if has_member diagnostics/logs.jsonl; then
     def safe_controller($input):
       ($input | if type == "string" then . else "" end) as $c
       | if ($c | test("kind=directoryentitlement"; "i")) then "DirectoryEntitlement"
+      elif ($c | test("subaccount[_-]?api[_-]?credential"; "i")) then "SubaccountApiCredential"
       elif ($c | test("managed/directory\\."; "i")) then "Directory"
       elif ($c | test("kind=directory"; "i")) then "Directory"
       else "other" end;
@@ -140,7 +143,9 @@ if has_member diagnostics/logs.jsonl; then
         else try ($timestamp | sub("\\.[0-9]+"; "") | fromdateiso8601) catch null end;
     def safe_error_category($input):
       ($input | if type == "string" then . else "" end) as $text
-      | if ($text | test("atProvider\\.directoryFeatures: Required value"; "i")) then "directory_features_required"
+      | if ($text | test("cannot read client_secret from source|client_secret[^\\n]{0,40}(missing|not found)|missing[^\\n]{0,40}client_secret"; "i")) then "api_credential_client_secret_missing"
+      elif ($text | test("cannot reconstruct external-name: (subaccount_id|name) missing from tfstate"; "i")) then "api_credential_state_missing"
+      elif ($text | test("atProvider\\.directoryFeatures: Required value"; "i")) then "directory_features_required"
       elif ($text | test("RBAC: clusterrole[^\\n]*not found"; "i")) then "provider_rbac_role_missing"
       elif ($text | test("(cannot|failed to|unable to|could not) resolve[^\\n]{0,80}reference|reference[^\\n]{0,80}(not found|unresolved)"; "i")) then "resource_reference_resolution"
       elif ($text | test("(http|status|response)[^0-9]{0,32}401([^0-9]|$)|401 unauthorized"; "i")) then "btp_http_401"
