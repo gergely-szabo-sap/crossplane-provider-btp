@@ -30,11 +30,12 @@ function harness({ createFailure, readyFailure, readyTimeout = false, deleteFail
       ready.push(kind);
       if (kind === 'SubaccountApiCredential' && opts.onObservation) {
         const observation = credentialObservation || {
-          ready: readyFailure === kind ? 'false' : 'true',
-          synced: 'true',
-          subaccountID: 'present',
-          lastPoll: 'ok',
-          pollErrors: [],
+          ready: { status: readyFailure === kind ? 'false' : 'true', reason: 'reconcile_success', generation: 'current', transitionAge: 'under_1m' },
+          synced: { status: 'true', reason: 'reconcile_success', generation: 'current', transitionAge: 'under_1m' },
+          subaccountID: 'present', atProviderID: 'present', atProviderName: 'present',
+          atProviderSubaccountID: 'present', certificateReceived: 'absent', credentialType: 'secrets',
+          externalName: 'present', pollCountBucket: '11_to_60', pollErrorCountBucket: '0',
+          lastPoll: 'ok', pollErrors: [],
         };
         opts.onObservation(observation);
         credentialObservations.push(observation);
@@ -94,9 +95,13 @@ const readinessLog = happy.logs.find((line) => line.includes('Allowlisted Subacc
 assert.ok(readinessLog?.includes('kind: SubaccountApiCredential'));
 assert.ok(readinessLog?.includes('subaccountId: <present>'));
 assert.ok(readinessLog?.includes('status: true'));
+assert.ok(readinessLog?.includes('reasonCategory: reconcile_success'));
+assert.ok(readinessLog?.includes('observedGeneration: current'));
+assert.ok(readinessLog?.includes('id: <present>'));
+assert.ok(readinessLog?.includes('requestCount: 11_to_60'));
 assert.ok(readinessLog?.includes('lastResult: ok'));
 assert.ok(!readinessLog?.includes('benchmark@example.invalid'));
-for (const field of ['ready_true', 'synced_true', 'subaccount_id_present', 'poll_last_ok', 'poll_error_none_seen']) {
+for (const field of ['ready_true', 'ready_reason_reconcile_success', 'ready_generation_current', 'ready_transition_age_under_1m', 'synced_true', 'subaccount_id_present', 'at_provider_id_present', 'credential_type_secrets', 'poll_count_11_to_60', 'poll_last_ok', 'poll_error_count_0', 'poll_error_none_seen']) {
   assert.ok(happy.phaseEvents.some((x) => x.phase === 'credential_readiness' && x.event === field && x.resourceKind === 'SubaccountApiCredential'), `missing safe credential observation ${field}`);
 }
 assert.equal(new Set(happy.created.map((x) => x.metadata.name)).size, kinds.length);
@@ -124,10 +129,13 @@ assert.throws(() => credentialTimeout.run(), /create\/readiness failed \(timeout
 assert.ok(credentialTimeout.phaseEvents.some((x) => x.phase === 'credential_readiness' && x.event === 'ready_false' && x.resourceKind === 'SubaccountApiCredential'));
 
 const hostileObservation = harness({ credentialObservation: {
-  ready: 'private condition message',
-  synced: 'true',
-  subaccountID: 'private-subaccount-id',
-  lastPoll: 'private response',
+  ready: { status: 'private condition message', reason: 'private condition reason', generation: 'private generation', transitionAge: 'private timestamp' },
+  synced: { status: 'true', reason: 'ReconcileSuccess', generation: 'current', transitionAge: 'under_1m' },
+  subaccountID: 'private-subaccount-id', atProviderID: 'private external id',
+  atProviderName: 'private name', atProviderSubaccountID: 'private parent id',
+  certificateReceived: 'private certificate', credentialType: 'private credential type',
+  externalName: 'private external name', pollCountBucket: 'private count',
+  pollErrorCountBucket: 'private count', lastPoll: 'private response',
   pollErrors: ['forbidden', 'private error text'],
 } });
 hostileObservation.run();
@@ -135,10 +143,12 @@ for (const event of hostileObservation.phaseEvents.filter((x) => x.phase === 'cr
   assert.ok(!event.event.includes('private'), `unsafe readiness value escaped into metric tag: ${event.event}`);
 }
 const hostileLog = hostileObservation.logs.find((line) => line.includes('Allowlisted SubaccountApiCredential observation'));
-for (const secret of ['private condition message', 'private-subaccount-id', 'private response', 'private error text']) {
+for (const secret of ['private condition message', 'private condition reason', 'private generation', 'private timestamp', 'private-subaccount-id', 'private external id', 'private name', 'private parent id', 'private certificate', 'private credential type', 'private external name', 'private count', 'private response', 'private error text']) {
   assert.ok(!hostileLog?.includes(secret), `unsafe readiness value escaped into log: ${secret}`);
 }
 assert.ok(hostileObservation.phaseEvents.some((x) => x.event === 'ready_other'));
+assert.ok(hostileObservation.phaseEvents.some((x) => x.event === 'ready_reason_other'));
+assert.ok(hostileObservation.phaseEvents.some((x) => x.event === 'ready_generation_other'));
 assert.ok(hostileObservation.phaseEvents.some((x) => x.event === 'subaccount_id_absent'));
 assert.ok(hostileObservation.phaseEvents.some((x) => x.event === 'poll_last_other_error'));
 assert.ok(hostileObservation.phaseEvents.some((x) => x.event === 'poll_error_forbidden_seen'));

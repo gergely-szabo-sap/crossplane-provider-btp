@@ -368,13 +368,69 @@ export function deleteAndWait(kind, name, opts = {}) {
  * @param {object} [opts] - { namespace, timeout, interval, apiVersion }
  * @returns {object} The ready resource
  */
-function safeConditionStatus(resource, type) {
+const SAFE_CONDITION_REASONS = {
+  ReconcileSuccess: 'reconcile_success',
+  ReconcileError: 'reconcile_error',
+  Creating: 'creating',
+  Deleting: 'deleting',
+  Unavailable: 'unavailable',
+  LateInitialize: 'late_initialize',
+  AsyncOperation: 'async_operation',
+  Waiting: 'waiting',
+  ReconcilePaused: 'reconcile_paused',
+  CannotInitializeManagedResource: 'cannot_initialize',
+  CannotConnectToProvider: 'cannot_connect_provider',
+  CannotGetReferencedObject: 'cannot_get_reference',
+  CannotResolveReferences: 'cannot_resolve_references',
+  CannotCreateExternalResource: 'cannot_create_external_resource',
+  CannotObserveExternalResource: 'cannot_observe_external_resource',
+  CannotUpdateExternalResource: 'cannot_update_external_resource',
+  CannotDeleteExternalResource: 'cannot_delete_external_resource',
+  ReferenceResolutionFailed: 'reference_resolution_failed',
+};
+
+function safeConditionObservation(resource, type) {
   const conditions = Array.isArray(resource?.status?.conditions) ? resource.status.conditions : [];
   const condition = conditions.find((candidate) => candidate?.type === type);
-  if (!condition) return 'absent';
-  if (condition.status === 'True' || condition.status === true) return 'true';
-  if (condition.status === 'False' || condition.status === false) return 'false';
-  return 'other';
+  if (!condition) return { status: 'absent', reason: 'absent', generation: 'unavailable', transitionAge: 'absent' };
+
+  const status = condition.status === 'True' || condition.status === true
+    ? 'true'
+    : condition.status === 'False' || condition.status === false ? 'false' : 'other';
+  const reason = typeof condition.reason === 'string'
+    ? (SAFE_CONDITION_REASONS[condition.reason] || 'other')
+    : 'absent';
+
+  const generation = resource?.metadata?.generation;
+  const observedGeneration = condition.observedGeneration;
+  let generationState = 'unavailable';
+  if (generation !== undefined && generation !== null) {
+    const current = Number(generation);
+    if (!Number.isSafeInteger(current) || current < 0) generationState = 'invalid';
+    else if (observedGeneration === undefined || observedGeneration === null) generationState = 'not_reported';
+    else {
+      const observed = Number(observedGeneration);
+      if (!Number.isSafeInteger(observed) || observed < 0) generationState = 'invalid';
+      else if (observed < current) generationState = 'stale';
+      else if (observed > current) generationState = 'ahead';
+      else generationState = 'current';
+    }
+  }
+
+  let transitionAge = 'absent';
+  if (condition.lastTransitionTime !== undefined && condition.lastTransitionTime !== null) {
+    const transitionedAt = Date.parse(condition.lastTransitionTime);
+    if (!Number.isFinite(transitionedAt)) transitionAge = 'invalid';
+    else {
+      const age = Date.now() - transitionedAt;
+      if (age < 0) transitionAge = 'future';
+      else if (age < 60_000) transitionAge = 'under_1m';
+      else if (age < 300_000) transitionAge = '1_to_5m';
+      else if (age < 600_000) transitionAge = '5_to_10m';
+      else transitionAge = 'over_10m';
+    }
+  }
+  return { status, reason, generation: generationState, transitionAge };
 }
 
 function safePollingErrorCategory(error) {
@@ -390,12 +446,25 @@ function safePollingErrorCategory(error) {
   return 'other_error';
 }
 
-function safeReadinessObservation(resource, lastPoll, pollErrors) {
+function safeReadinessObservation(resource, lastPoll, pollErrors, pollCount, pollErrorCount) {
   const subaccountID = resource?.spec?.forProvider?.subaccountId;
+  const atProvider = resource?.status?.atProvider || {};
+  const externalName = resource?.metadata?.annotations?.['crossplane.io/external-name'];
+  const pollCountBucket = pollCount <= 1 ? '1' : pollCount <= 10 ? '2_to_10' : pollCount <= 60 ? '11_to_60' : pollCount <= 600 ? '61_to_600' : 'over_600';
   return {
-    ready: safeConditionStatus(resource, 'Ready'),
-    synced: safeConditionStatus(resource, 'Synced'),
+    ready: safeConditionObservation(resource, 'Ready'),
+    synced: safeConditionObservation(resource, 'Synced'),
     subaccountID: typeof subaccountID === 'string' && subaccountID.trim() !== '' ? 'present' : 'absent',
+    atProviderID: typeof atProvider.id === 'string' && atProvider.id.trim() !== '' ? 'present' : 'absent',
+    atProviderName: typeof atProvider.name === 'string' && atProvider.name.trim() !== '' ? 'present' : 'absent',
+    atProviderSubaccountID: typeof atProvider.subaccountId === 'string' && atProvider.subaccountId.trim() !== '' ? 'present' : 'absent',
+    certificateReceived: typeof atProvider.certificateReceived === 'string' && atProvider.certificateReceived.trim() !== '' ? 'present' : 'absent',
+    credentialType: atProvider.credentialType === 'Secrets' ? 'secrets'
+      : atProvider.credentialType === 'Certificates' ? 'certificates'
+        : atProvider.credentialType == null || atProvider.credentialType === '' ? 'absent' : 'other',
+    externalName: typeof externalName === 'string' && externalName.trim() !== '' ? 'present' : 'absent',
+    pollCountBucket,
+    pollErrorCountBucket: pollErrorCount === 0 ? '0' : pollErrorCount === 1 ? '1' : pollErrorCount <= 5 ? '2_to_5' : 'over_5',
     lastPoll,
     pollErrors: [...pollErrors].sort(),
   };
@@ -417,13 +486,16 @@ export function waitForReady(kind, name, opts = {}) {
   let lastResource;
   const pollErrors = new Set();
   let observationEmitted = false;
+  let pollCount = 0;
+  let pollErrorCount = 0;
   const emitObservation = (resource) => {
     if (observationEmitted || typeof opts.onObservation !== 'function') return;
     observationEmitted = true;
-    opts.onObservation(safeReadinessObservation(resource, lastPoll, pollErrors));
+    opts.onObservation(safeReadinessObservation(resource, lastPoll, pollErrors, pollCount, pollErrorCount));
   };
 
   while (Date.now() < deadline) {
+    pollCount += 1;
     let resource;
     try {
       resource = client.get(groupKind(kind, apiVersion), name, ns);
@@ -432,6 +504,7 @@ export function waitForReady(kind, name, opts = {}) {
     } catch (e) {
       lastPoll = safePollingErrorCategory(e);
       pollErrors.add(lastPoll);
+      pollErrorCount += 1;
       lastError = e;
       sleep(interval);
       continue;

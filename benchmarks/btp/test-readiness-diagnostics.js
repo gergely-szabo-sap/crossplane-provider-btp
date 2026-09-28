@@ -56,10 +56,11 @@ function wait(context, get, { timeout = 2 } = {}) {
 }
 
 const readyResource = {
+  metadata: { generation: 2, annotations: { 'crossplane.io/external-name': 'private-external-name' } },
   spec: { forProvider: { subaccountId: 'private-subaccount-id' } },
-  status: { conditions: [
-    { type: 'Ready', status: 'False', reason: 'private reason', message: 'private condition message' },
-    { type: 'Synced', status: 'True', message: 'private sync message' },
+  status: { atProvider: { id: 'private-id', name: 'private-name', credentialType: 'Secrets', subaccountId: 'private-subaccount-id', certificateReceived: 'private-certificate' }, conditions: [
+    { type: 'Ready', status: 'False', reason: 'private reason', message: 'private condition message', observedGeneration: 1, lastTransitionTime: '1970-01-01T00:00:00Z' },
+    { type: 'Synced', status: 'True', message: 'private sync message', observedGeneration: 2, lastTransitionTime: '1970-01-01T00:00:00Z' },
   ] },
 };
 let reads = 0;
@@ -68,14 +69,19 @@ const success = wait(createHarness(() => null), () => {
   if (reads === 1) return readyResource;
   return {
     ...readyResource,
-    status: { conditions: [
-      { type: 'Ready', status: 'True', message: 'private final message' },
-      { type: 'Synced', status: 'True' },
+    status: { ...readyResource.status, conditions: [
+      { type: 'Ready', status: 'True', reason: 'ReconcileSuccess', observedGeneration: 2, lastTransitionTime: '1970-01-01T00:00:00Z', message: 'private final message' },
+      { type: 'Synced', status: 'True', reason: 'ReconcileSuccess', observedGeneration: 2, lastTransitionTime: '1970-01-01T00:00:00Z' },
     ] },
   };
 });
 assert.deepEqual(JSON.parse(JSON.stringify(success.observation)), {
-  ready: 'true', synced: 'true', subaccountID: 'present', lastPoll: 'ok', pollErrors: [],
+  ready: { status: 'true', reason: 'reconcile_success', generation: 'current', transitionAge: 'under_1m' },
+  synced: { status: 'true', reason: 'reconcile_success', generation: 'current', transitionAge: 'under_1m' },
+  subaccountID: 'present', atProviderID: 'present', atProviderName: 'present',
+  atProviderSubaccountID: 'present', certificateReceived: 'present', credentialType: 'secrets',
+  externalName: 'present', pollCountBucket: '2_to_10', pollErrorCountBucket: '0',
+  lastPoll: 'ok', pollErrors: [],
 });
 
 const timeoutContext = createHarness(() => null);
@@ -88,7 +94,12 @@ const timedOut = wait(timeoutContext, () => ({
 }));
 assert.equal(timedOut.error?.name, 'TimeoutError');
 assert.deepEqual(JSON.parse(JSON.stringify(timedOut.observation)), {
-  ready: 'false', synced: 'true', subaccountID: 'present', lastPoll: 'ok', pollErrors: [],
+  ready: { status: 'false', reason: 'other', generation: 'unavailable', transitionAge: 'absent' },
+  synced: { status: 'true', reason: 'absent', generation: 'unavailable', transitionAge: 'absent' },
+  subaccountID: 'present', atProviderID: 'absent', atProviderName: 'absent',
+  atProviderSubaccountID: 'absent', certificateReceived: 'absent', credentialType: 'absent',
+  externalName: 'absent', pollCountBucket: '2_to_10', pollErrorCountBucket: '0',
+  lastPoll: 'ok', pollErrors: [],
 });
 
 const pollingContext = createHarness(() => null);
@@ -99,7 +110,12 @@ const pollingFailure = wait(pollingContext, () => {
 });
 assert.equal(pollingFailure.error?.name, 'TimeoutError');
 assert.deepEqual(JSON.parse(JSON.stringify(pollingFailure.observation)), {
-  ready: 'absent', synced: 'absent', subaccountID: 'absent', lastPoll: 'forbidden', pollErrors: ['forbidden'],
+  ready: { status: 'absent', reason: 'absent', generation: 'unavailable', transitionAge: 'absent' },
+  synced: { status: 'absent', reason: 'absent', generation: 'unavailable', transitionAge: 'absent' },
+  subaccountID: 'absent', atProviderID: 'absent', atProviderName: 'absent',
+  atProviderSubaccountID: 'absent', certificateReceived: 'absent', credentialType: 'absent',
+  externalName: 'absent', pollCountBucket: '2_to_10', pollErrorCountBucket: '2_to_5',
+  lastPoll: 'forbidden', pollErrors: ['forbidden'],
 });
 
 for (const result of [success, timedOut, pollingFailure]) {
