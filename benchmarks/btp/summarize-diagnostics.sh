@@ -18,14 +18,63 @@ has_member() {
 
 if ! has_member diagnostics/index.json; then
   echo "No diagnostics sidecar is present in the benchmark archive."
+  if [[ -n "${GITHUB_STEP_SUMMARY:-}" ]]; then
+    printf '%s\n\n' '### Sanitized benchmark diagnostics' 'No diagnostics sidecar is present in the benchmark archive.' >>"$GITHUB_STEP_SUMMARY"
+  fi
   exit 0
 fi
 
-printf '%s\n' 'Sanitized benchmark diagnostic summary (raw log and Event messages omitted):'
+emit_line() {
+  printf '%s\n' "$1"
+  if [[ -n "${GITHUB_STEP_SUMMARY:-}" ]]; then
+    printf '%s\n' "$1" >>"$GITHUB_STEP_SUMMARY"
+  fi
+}
 
-tar --zstd -xOf "$archive" diagnostics/index.json | jq -r '
-  "Coverage: logs_complete=\(.logs.complete // false), events_complete=\(.events.complete // false), records=\(.records // 0), warnings=\((.warnings // []) | length)"
-'
+emit_line '### Sanitized benchmark diagnostics'
+emit_line 'Raw log and Event messages, identifiers, warning text, and timestamps are omitted.'
+
+coverage_summary="$(tar --zstd -xOf "$archive" diagnostics/index.json | jq -r '
+  def safe_bool($value): if $value == true then "true" elif $value == false then "false" else "unknown" end;
+  def safe_count($value):
+    if ($value | type) == "number" and ($value | isfinite) and $value >= 0 and $value == ($value | floor)
+    then ($value | tostring) else "unknown" end;
+  "Coverage: sidecar_complete=\(safe_bool(.complete)), truncated=\(safe_bool(.truncated)), records=\(safe_count(.records)), dropped_records=\(safe_count(.dropped_records)); logs_complete=\(safe_bool(.logs.complete)), logs_records=\(safe_count(.logs.records)), logs_dropped=\(safe_count(.logs.dropped_records)); events_complete=\(safe_bool(.events.complete)), events_records=\(safe_count(.events.records)), events_dropped=\(safe_count(.events.dropped_records)); warnings=\(if (.warnings | type) == "array" then (.warnings | length | tostring) else "unknown" end)"
+')"
+emit_line "$coverage_summary"
+
+warning_summary="$(tar --zstd -xOf "$archive" diagnostics/index.json | jq -sr '
+  def category($warning):
+    if ($warning | test("^diagnostic logs .*: forbidden$")) then "logs_forbidden"
+    elif ($warning | test("^diagnostic logs .*: unauthorized$")) then "logs_unauthorized"
+    elif ($warning | test("^diagnostic logs .*: not_found$")) then "logs_not_found"
+    elif ($warning | test("^diagnostic logs .*: rate_limited$")) then "logs_rate_limited"
+    elif ($warning | test("^diagnostic logs .*: transport_error$")) then "logs_transport_error"
+    elif ($warning | test("^diagnostic logs .*: (reconnect_limit|replay_boundary_overflow)$")) then "logs_stream_limit"
+    elif ($warning | test("^diagnostic logs .*: (overlong_line|interrupted_line)$")) then "logs_record_limit"
+    elif ($warning | test("^diagnostic logs .*: (collector_error|sink_error)$")) then "logs_collector_error"
+    elif ($warning | test("^diagnostic logs .*: inventory:unavailable$")) then "logs_inventory_unavailable"
+    elif ($warning | test("^diagnostic Events .*: forbidden$")) then "events_forbidden"
+    elif ($warning | test("^diagnostic Events .*: unauthorized$")) then "events_unauthorized"
+    elif ($warning | test("^diagnostic Events .*: not_found$")) then "events_not_found"
+    elif ($warning | test("^diagnostic Events .*: rate_limited$")) then "events_rate_limited"
+    elif ($warning | test("^diagnostic Events .*: api_error$")) then "events_api_error"
+    elif ($warning | test("^diagnostic Events .*: poll_limit$")) then "events_poll_limit"
+    elif ($warning | test("^diagnostic Events .*: pagination_limit$")) then "events_pagination_limit"
+    elif ($warning | test("^diagnostic Events .*: api_switched$")) then "events_api_switched"
+    elif ($warning | test("^diagnostic Events .*: (time_unknown|before_start)$")) then "events_time_attribution_gap"
+    elif ($warning | test("^diagnostic Events .*: seen_state_evicted$")) then "events_state_limit"
+    elif ($warning | test("^diagnostic provider identity .* is unavailable$")) then "provider_identity_unavailable"
+    else "other" end;
+  [ .[] | .warnings[]? | if type == "string" then category(.) else "other" end ]
+  | group_by(.)[]
+  | "Diagnostics warning: category=\(.[0]) count=\(length)"
+' 2>/dev/null || true)"
+if [[ -n "$warning_summary" ]]; then
+  while IFS= read -r line; do emit_line "$line"; done <<<"$warning_summary"
+else
+  emit_line 'Diagnostics warnings: none.'
+fi
 
 if has_member diagnostics/events.jsonl; then
   event_summary="$(tar --zstd -xOf "$archive" diagnostics/events.jsonl | jq -sr '
@@ -71,9 +120,9 @@ if has_member diagnostics/events.jsonl; then
     | "Event: kind=\(.[0].kind) type=\(.[0].type) reason=\(.[0].reason) detail=\(.[0].detail) count=\(length)"
   ' 2>/dev/null || true)"
   if [[ -n "$event_summary" ]]; then
-    printf '%s\n' "$event_summary"
+    while IFS= read -r line; do emit_line "$line"; done <<<"$event_summary"
   else
-    echo 'Events: no recognized managed-resource Events.'
+    emit_line 'Events: no recognized managed-resource Events.'
   fi
 fi
 
@@ -125,9 +174,9 @@ if has_member diagnostics/logs.jsonl; then
     | "Provider log: controller=\(.[0].controller) level=\(.[0].level) category=\(.[0].category) capture_window=\(.[0].capture_window) count=\(length)"
   ' 2>/dev/null || true)"
   if [[ -n "$log_summary" ]]; then
-    echo 'Provider log time buckets are relative to the first retained diagnostic log timestamp, not benchmark start.'
-    printf '%s\n' "$log_summary"
+    emit_line 'Provider log time buckets are relative to the first retained diagnostic log timestamp, not benchmark start.'
+    while IFS= read -r line; do emit_line "$line"; done <<<"$log_summary"
   else
-    echo 'Provider logs: no matching error or warning records.'
+    emit_line 'Provider logs: no matching error or warning records.'
   fi
 fi
