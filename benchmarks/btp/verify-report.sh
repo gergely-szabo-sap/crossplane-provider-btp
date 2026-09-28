@@ -52,7 +52,7 @@ if ! contract_data="$(jq -r '
   | [metrics[]
      | select(.source == "raw_k6" and .metric == "xp_lifecycle_phase_duration" and .metric_type == "trend")
      | (.tags.resource_kind // "") as $kind
-     | (.tags.phase // "") as $phase
+     | (.tags.stage // "") as $phase
      | (.tags.outcome // "") as $outcome
      | (.tags.reason // "") as $reason
      | select((["create_request", "readiness", "delete_request", "kubernetes_absence_wait"] | index($phase)) != null)
@@ -66,8 +66,8 @@ if ! contract_data="$(jq -r '
   | [metrics[]
      | select(.source == "raw_k6" and .metric == "xp_measurement_phase" and .metric_type == "counter")
      | (.tags.resource_kind // "") as $kind
-     | (.tags.phase // "") as $phase
-     | (.tags.event // "") as $event
+     | (.tags.stage // "") as $phase
+     | (.tags.field // "") as $event
      | select((["create_request", "readiness", "delete_request", "kubernetes_absence_wait"] | index($phase)) != null)
      | select((["started", "requested", "accepted", "observed", "failed"] | index($event)) != null)
      | select((["Subaccount", "Directory", "Entitlement", "DirectoryEntitlement", "SubaccountApiCredential"] | index($kind)) != null)
