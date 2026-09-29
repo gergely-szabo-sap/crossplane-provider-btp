@@ -27,9 +27,12 @@ jobs:
         run: echo 'Fork PRs do not receive BTP credentials, so their benchmark is skipped. Automatic benchmarks run only for non-draft same-repository PRs targeting the default branch.'
 
   benchmark:
+    outputs:
+      metrics_archive_url: ${{ steps.archive.outputs.artifact-url }}
+      test_outcome: ${{ steps.test.outcome }}
+      test_exit_code: ${{ steps.test.outputs.exit-code }}
     permissions:
       contents: read
-      issues: write
     if: >-
       ${{
         github.event_name == 'workflow_dispatch' ||
@@ -198,15 +201,28 @@ jobs:
           retention-days: 7
           compression-level: 0
 
+      - name: Fail if no archive was produced
+        if: ${{ !cancelled() && steps.test.outputs.archive == '' }}
+        run: |
+          echo '::error::Benchmark did not produce a reportable archive.'
+          exit 1
+
+  publish-archive-comment:
+    needs: benchmark
+    if: ${{ always() && !cancelled() && github.event_name == 'pull_request' && needs.benchmark.result != 'skipped' }}
+    runs-on: ubuntu-latest
+    permissions:
+      contents: none
+      pull-requests: write
+    steps:
       - name: Publish benchmark archive link on pull request
-        if: ${{ !cancelled() && github.event_name == 'pull_request' }}
         env:
           GH_TOKEN: ${{ github.token }}
           PR_NUMBER: ${{ github.event.pull_request.number }}
           PR_HEAD_SHA: ${{ github.event.pull_request.head.sha }}
-          ARTIFACT_URL: ${{ steps.archive.outputs.artifact-url }}
-          TEST_OUTCOME: ${{ steps.test.outcome }}
-          TEST_EXIT_CODE: ${{ steps.test.outputs.exit-code }}
+          ARTIFACT_URL: ${{ needs.benchmark.outputs.metrics_archive_url }}
+          TEST_OUTCOME: ${{ needs.benchmark.outputs.test_outcome }}
+          TEST_EXIT_CODE: ${{ needs.benchmark.outputs.test_exit_code }}
         run: |
           set -euo pipefail
           if [[ -n "$ARTIFACT_URL" ]]; then
@@ -238,9 +254,3 @@ jobs:
               "repos/$GITHUB_REPOSITORY/issues/$PR_NUMBER/comments" \
               -f body="$body" >/dev/null
           fi
-
-      - name: Fail if no archive was produced
-        if: ${{ !cancelled() && steps.test.outputs.archive == '' }}
-        run: |
-          echo '::error::Benchmark did not produce a reportable archive.'
-          exit 1
