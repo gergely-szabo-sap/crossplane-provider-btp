@@ -8,38 +8,33 @@ on:
         required: true
         type: boolean
         default: false
-  pull_request_target:
+  pull_request:
     types: [opened, synchronize, reopened, ready_for_review]
 
 permissions:
   contents: read
-  pull-requests: read
-  issues: write
 
 concurrency:
-  group: btp-benchmark-${{ github.event.pull_request.number || github.ref }}
+  group: btp-benchmark-${{ github.ref }}
   cancel-in-progress: true
 
 jobs:
-  approve:
-    if: ${{ github.event_name == 'pull_request_target' && !github.event.pull_request.draft && github.event.pull_request.base.ref == github.event.repository.default_branch }}
+  pr-notice:
+    if: ${{ github.event_name == 'pull_request' }}
     runs-on: ubuntu-latest
-    environment:
-      name: ${{ contains(fromJson('["OWNER","MEMBER","COLLABORATOR"]'), github.event.pull_request.author_association) && 'pr-e2e-no-approval' || 'pr-e2e-approval' }}
-      deployment: false
     steps:
-      - run: echo "Approval gate passed"
+      - name: Explain credentialed benchmark policy
+        run: echo 'PR-triggered runs do not execute the credentialed BTP benchmark. Use the confirmed workflow_dispatch on the default branch to run it.'
 
   benchmark:
-    needs: approve
-    if: ${{ always() && (needs.approve.result == 'success' || (github.event_name == 'workflow_dispatch' && needs.approve.result == 'skipped')) }}
+    if: ${{ github.event_name == 'workflow_dispatch' }}
     runs-on: ubuntu-24.04
     timeout-minutes: 180
     environment:
       name: pr-e2e-no-approval
       deployment: false
     env:
-      VERSION: v0.0.0-${{ github.event_name == 'pull_request_target' && github.event.pull_request.head.sha || github.sha }}
+      VERSION: v0.0.0-${{ github.sha }}
       BUILD_REGISTRY: provider-btp-benchmark
       PLATFORMS: linux_amd64
     steps:
@@ -53,22 +48,6 @@ jobs:
           [[ "${{ inputs.confirm_dedicated_account }}" == "true" ]] || {
             echo '::error::Confirm the dedicated BTP benchmark account before dispatch.'; exit 1;
           }
-
-      - name: Validate approved PR revision
-        if: ${{ github.event_name == 'pull_request_target' }}
-        env:
-          GH_TOKEN: ${{ github.token }}
-          PR_NUMBER: ${{ github.event.pull_request.number }}
-          EXPECTED_SHA: ${{ github.event.pull_request.head.sha }}
-          DEFAULT_BRANCH: ${{ github.event.repository.default_branch }}
-        run: |
-          set -euo pipefail
-          pr="$(gh api "repos/$GITHUB_REPOSITORY/pulls/$PR_NUMBER")"
-          jq -e --arg repo "$GITHUB_REPOSITORY" --arg branch "$DEFAULT_BRANCH" --arg sha "$EXPECTED_SHA" \
-            '.state == "open" and .base.repo.full_name == $repo and .base.ref == $branch and .head.sha == $sha' \
-            <<<"$pr" >/dev/null || {
-              echo '::error::The approved PR head changed or no longer targets the default branch; wait for a fresh workflow run and approval.'; exit 1;
-            }
 
       - name: Validate benchmark account configuration
         env:
@@ -104,14 +83,13 @@ jobs:
       - name: Check out source
         uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
-          ref: ${{ github.event_name == 'pull_request_target' && github.event.pull_request.head.sha || github.sha }}
+          ref: ${{ github.sha }}
           submodules: true
           persist-credentials: false
-          allow-unsafe-pr-checkout: ${{ github.event_name == 'pull_request_target' }}
 
-      - name: Assert source matches trusted revision
+      - name: Assert source matches dispatched revision
         env:
-          EXPECTED_SHA: ${{ github.event_name == 'pull_request_target' && github.event.pull_request.head.sha || github.sha }}
+          EXPECTED_SHA: ${{ github.sha }}
         run: |
           set -euo pipefail
           actual="$(git rev-parse HEAD)"
@@ -209,47 +187,6 @@ jobs:
           if-no-files-found: error
           retention-days: 7
           compression-level: 0
-
-      - name: Publish benchmark archive comment on pull request
-        if: ${{ !cancelled() && github.event_name == 'pull_request_target' }}
-        env:
-          GH_TOKEN: ${{ github.token }}
-          PR_NUMBER: ${{ github.event.pull_request.number }}
-          PR_HEAD_SHA: ${{ github.event.pull_request.head.sha }}
-          ARTIFACT_URL: ${{ steps.archive.outputs.artifact-url }}
-          TEST_OUTCOME: ${{ steps.test.outcome }}
-          TEST_EXIT_CODE: ${{ steps.test.outputs.exit-code }}
-        run: |
-          set -euo pipefail
-          if [[ -n "$ARTIFACT_URL" ]]; then
-            archive_link="[Download the metrics archive]($ARTIFACT_URL) (available for 7 days; GitHub authentication and repository access are required)."
-          else
-            archive_link='_No downloadable metrics archive was published for this run._'
-          fi
-          body="$(cat <<EOF
-          <!-- btp-synthetic-benchmark-archive -->
-          ### BTP benchmark metrics archive
-
-          $archive_link
-
-          - Benchmark action outcome: \`${TEST_OUTCOME:-not started}\` (CLI exit code: \`${TEST_EXIT_CODE:-unavailable}\`).
-          - Run: [${GITHUB_RUN_ID} attempt ${GITHUB_RUN_ATTEMPT}](${GITHUB_SERVER_URL}/${GITHUB_REPOSITORY}/actions/runs/${GITHUB_RUN_ID})
-          - PR head revision tested: \`${PR_HEAD_SHA}\`.
-          EOF
-          )"
-          existing_comment_id="$(gh api --paginate \
-            "repos/$GITHUB_REPOSITORY/issues/$PR_NUMBER/comments?per_page=100" \
-            --jq '.[] | select(.user.login == "github-actions[bot]" and (.body | contains("<!-- btp-synthetic-benchmark-archive -->"))) | .id' \
-            | tail -n 1)"
-          if [[ -n "$existing_comment_id" ]]; then
-            gh api --method PATCH \
-              "repos/$GITHUB_REPOSITORY/issues/comments/$existing_comment_id" \
-              -f body="$body" >/dev/null
-          else
-            gh api --method POST \
-              "repos/$GITHUB_REPOSITORY/issues/$PR_NUMBER/comments" \
-              -f body="$body" >/dev/null
-          fi
 
       - name: Fail if no archive was produced
         if: ${{ !cancelled() && steps.test.outputs.archive == '' }}
