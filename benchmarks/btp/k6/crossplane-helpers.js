@@ -368,135 +368,6 @@ export function deleteAndWait(kind, name, opts = {}) {
  * @param {object} [opts] - { namespace, timeout, interval, apiVersion }
  * @returns {object} The ready resource
  */
-const SAFE_CONDITION_REASONS = {
-  ReconcileSuccess: 'reconcile_success',
-  ReconcileError: 'reconcile_error',
-  Creating: 'creating',
-  Deleting: 'deleting',
-  Unavailable: 'unavailable',
-  LateInitialize: 'late_initialize',
-  AsyncOperation: 'async_operation',
-  Waiting: 'waiting',
-  ReconcilePaused: 'reconcile_paused',
-  CannotInitializeManagedResource: 'cannot_initialize',
-  CannotConnectToProvider: 'cannot_connect_provider',
-  CannotGetReferencedObject: 'cannot_get_reference',
-  CannotResolveReferences: 'cannot_resolve_references',
-  CannotCreateExternalResource: 'cannot_create_external_resource',
-  CannotObserveExternalResource: 'cannot_observe_external_resource',
-  CannotUpdateExternalResource: 'cannot_update_external_resource',
-  CannotDeleteExternalResource: 'cannot_delete_external_resource',
-  ReferenceResolutionFailed: 'reference_resolution_failed',
-};
-
-function safeConditionMessageCategory(condition) {
-  if (!condition) return 'absent';
-  if (condition.status !== 'False' && condition.status !== false) return 'not_applicable';
-  if (typeof condition.message !== 'string' || condition.message.trim() === '') return 'absent';
-
-  const text = condition.message.toLowerCase();
-  if (/(?:^|\D)(?:401|unauthorized)(?:\D|$)|authentication failed|invalid credentials/.test(text)) return 'authentication';
-  if (/(?:^|\D)(?:403|forbidden)(?:\D|$)|permission denied|not authorized/.test(text)) return 'authorization';
-  if (/(?:^|\D)429(?:\D|$)|too many requests|rate.?limit/.test(text)) return 'rate_limited';
-  if (/timeout|timed out|deadline exceeded/.test(text)) return 'timeout';
-  if (/x509|tls|connection refused|no such host|dial tcp|transport/.test(text)) return 'transport';
-  if (/(?:^|\D)5\d\d(?:\D|$)|internal server error|service unavailable/.test(text)) return 'remote_server';
-  if (/(?:^|\D)404(?:\D|$)|not found/.test(text)) return 'not_found';
-  if (/(?:^|\D)409(?:\D|$)|conflict|already exists/.test(text)) return 'conflict';
-  if (/(?:^|\D)400(?:\D|$)|invalid|validation/.test(text)) return 'validation';
-  if (/reference|cannot resolve/.test(text)) return 'reference';
-  if (/unsupported|not supported/.test(text)) return 'unsupported';
-  return 'unknown';
-}
-
-function safeConditionObservation(resource, type) {
-  const conditions = Array.isArray(resource?.status?.conditions) ? resource.status.conditions : [];
-  const condition = conditions.find((candidate) => candidate?.type === type);
-  if (!condition) return { status: 'absent', reason: 'absent', generation: 'unavailable', transitionAge: 'absent', messageCategory: 'absent' };
-
-  const status = condition.status === 'True' || condition.status === true
-    ? 'true'
-    : condition.status === 'False' || condition.status === false ? 'false' : 'other';
-  const reason = typeof condition.reason === 'string'
-    ? (SAFE_CONDITION_REASONS[condition.reason] || 'other')
-    : 'absent';
-
-  const generation = resource?.metadata?.generation;
-  const observedGeneration = condition.observedGeneration;
-  let generationState = 'unavailable';
-  if (generation !== undefined && generation !== null) {
-    const current = Number(generation);
-    if (!Number.isSafeInteger(current) || current < 0) generationState = 'invalid';
-    else if (observedGeneration === undefined || observedGeneration === null) generationState = 'not_reported';
-    else {
-      const observed = Number(observedGeneration);
-      if (!Number.isSafeInteger(observed) || observed < 0) generationState = 'invalid';
-      else if (observed < current) generationState = 'stale';
-      else if (observed > current) generationState = 'ahead';
-      else generationState = 'current';
-    }
-  }
-
-  let transitionAge = 'absent';
-  if (condition.lastTransitionTime !== undefined && condition.lastTransitionTime !== null) {
-    const transitionedAt = Date.parse(condition.lastTransitionTime);
-    if (!Number.isFinite(transitionedAt)) transitionAge = 'invalid';
-    else {
-      const age = Date.now() - transitionedAt;
-      if (age < 0) transitionAge = 'future';
-      else if (age < 60_000) transitionAge = 'under_1m';
-      else if (age < 300_000) transitionAge = '1_to_5m';
-      else if (age < 600_000) transitionAge = '5_to_10m';
-      else transitionAge = 'over_10m';
-    }
-  }
-  return {
-    status,
-    reason,
-    generation: generationState,
-    transitionAge,
-    messageCategory: safeConditionMessageCategory(condition),
-  };
-}
-
-function safePollingErrorCategory(error) {
-  const message = String(error?.message || '').toLowerCase();
-  const status = [error?.status, error?.statusCode, error?.code]
-    .filter((value) => value !== undefined && value !== null)
-    .map((value) => String(value).toLowerCase())
-    .join(' ');
-  const text = `${status} ${message}`;
-  if (/(^|\D)401(\D|$)|unauthorized/.test(text)) return 'unauthorized';
-  if (/(^|\D)403(\D|$)|forbidden/.test(text)) return 'forbidden';
-  if (/(^|\D)404(\D|$)|not found/.test(text)) return 'not_found';
-  return 'other_error';
-}
-
-function safeReadinessObservation(resource, lastPoll, pollErrors, pollCount, pollErrorCount, history) {
-  const subaccountID = resource?.spec?.forProvider?.subaccountId;
-  const atProvider = resource?.status?.atProvider || {};
-  const externalName = resource?.metadata?.annotations?.['crossplane.io/external-name'];
-  const pollCountBucket = pollCount <= 1 ? '1' : pollCount <= 10 ? '2_to_10' : pollCount <= 60 ? '11_to_60' : pollCount <= 600 ? '61_to_600' : 'over_600';
-  return {
-    ready: safeConditionObservation(resource, 'Ready'),
-    synced: safeConditionObservation(resource, 'Synced'),
-    history: Object.fromEntries(Object.entries(history).map(([key, values]) => [key, [...values].sort()])),
-    subaccountID: typeof subaccountID === 'string' && subaccountID.trim() !== '' ? 'present' : 'absent',
-    atProviderID: typeof atProvider.id === 'string' && atProvider.id.trim() !== '' ? 'present' : 'absent',
-    atProviderName: typeof atProvider.name === 'string' && atProvider.name.trim() !== '' ? 'present' : 'absent',
-    atProviderSubaccountID: typeof atProvider.subaccountId === 'string' && atProvider.subaccountId.trim() !== '' ? 'present' : 'absent',
-    certificateReceived: typeof atProvider.certificateReceived === 'string' && atProvider.certificateReceived.trim() !== '' ? 'present' : 'absent',
-    credentialType: atProvider.credentialType === 'Secrets' ? 'secrets'
-      : atProvider.credentialType === 'Certificates' ? 'certificates'
-        : atProvider.credentialType == null || atProvider.credentialType === '' ? 'absent' : 'other',
-    externalName: typeof externalName === 'string' && externalName.trim() !== '' ? 'present' : 'absent',
-    pollCountBucket,
-    pollErrorCountBucket: pollErrorCount === 0 ? '0' : pollErrorCount === 1 ? '1' : pollErrorCount <= 5 ? '2_to_5' : 'over_5',
-    lastPoll,
-    pollErrors: [...pollErrors].sort(),
-  };
-}
-
 export function waitForReady(kind, name, opts = {}) {
   const client = k8sClient();
   const ns = opts.namespace || DEFAULT_NAMESPACE;
@@ -509,46 +380,12 @@ export function waitForReady(kind, name, opts = {}) {
 
   const deadline = Date.now() + timeout * 1000;
   let lastError = null;
-  let lastPoll = 'not_found';
-  let lastResource;
-  const pollErrors = new Set();
-  let observationEmitted = false;
-  let pollCount = 0;
-  let pollErrorCount = 0;
-  const history = {
-    readyStatuses: new Set(), readyReasons: new Set(), readyMessageCategories: new Set(),
-    syncedStatuses: new Set(), syncedReasons: new Set(), syncedMessageCategories: new Set(),
-    atProviderID: new Set(), externalName: new Set(),
-  };
-  const observeHistory = (resource) => {
-    for (const [type, prefix] of [['Ready', 'ready'], ['Synced', 'synced']]) {
-      const condition = safeConditionObservation(resource, type);
-      history[`${prefix}Statuses`].add(condition.status);
-      history[`${prefix}Reasons`].add(condition.reason);
-      history[`${prefix}MessageCategories`].add(condition.messageCategory);
-    }
-    const fields = safeReadinessObservation(resource, lastPoll, pollErrors, pollCount, pollErrorCount, {});
-    history.atProviderID.add(fields.atProviderID);
-    history.externalName.add(fields.externalName);
-  };
-  const emitObservation = (resource) => {
-    if (observationEmitted || typeof opts.onObservation !== 'function') return;
-    observationEmitted = true;
-    opts.onObservation(safeReadinessObservation(resource, lastPoll, pollErrors, pollCount, pollErrorCount, history));
-  };
 
   while (Date.now() < deadline) {
-    pollCount += 1;
     let resource;
     try {
       resource = client.get(groupKind(kind, apiVersion), name, ns);
-      lastResource = resource;
-      lastPoll = 'ok';
-      observeHistory(resource);
     } catch (e) {
-      lastPoll = safePollingErrorCategory(e);
-      pollErrors.add(lastPoll);
-      pollErrorCount += 1;
       lastError = e;
       sleep(interval);
       continue;
@@ -560,7 +397,6 @@ export function waitForReady(kind, name, opts = {}) {
     );
 
     if (ready && (ready.status === 'True' || ready.status === true)) {
-      emitObservation(resource);
       return resource;
     }
 
@@ -569,7 +405,6 @@ export function waitForReady(kind, name, opts = {}) {
       (c) => c.type === 'Ready' && (c.status === 'False' || c.status === false) && c.reason === 'ReconcileError'
     );
     if (failed) {
-      emitObservation(resource);
       xpResourcesFailed.add(1);
       console.log(`[XP-OPS] failed ${kind}/${name}: reconciliation error`);
       throw new CrossplaneError(`Resource ${kind}/${name} failed reconciliation`);
@@ -578,7 +413,6 @@ export function waitForReady(kind, name, opts = {}) {
     sleep(interval);
   }
 
-  emitObservation(lastResource);
   xpResourcesFailed.add(1);
   console.log(`[XP-OPS] failed ${kind}/${name}: timed out after ${timeout}s`);
   throw new TimeoutError(
