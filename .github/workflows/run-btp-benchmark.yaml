@@ -20,21 +20,31 @@ concurrency:
 
 jobs:
   pr-notice:
-    if: ${{ github.event_name == 'pull_request' }}
+    if: ${{ github.event_name == 'pull_request' && github.event.pull_request.head.repo.full_name != github.repository }}
     runs-on: ubuntu-latest
     steps:
       - name: Explain credentialed benchmark policy
-        run: echo 'PR-triggered runs do not execute the credentialed BTP benchmark. Use the confirmed workflow_dispatch on the default branch to run it.'
+        run: echo 'Fork PRs do not receive BTP credentials, so their benchmark is skipped. Automatic benchmarks run only for non-draft same-repository PRs targeting the default branch.'
 
   benchmark:
-    if: ${{ github.event_name == 'workflow_dispatch' }}
+    permissions:
+      contents: read
+      issues: write
+    if: >-
+      ${{
+        github.event_name == 'workflow_dispatch' ||
+        (github.event_name == 'pull_request' &&
+         github.event.pull_request.head.repo.full_name == github.repository &&
+         !github.event.pull_request.draft &&
+         github.event.pull_request.base.ref == github.event.repository.default_branch)
+      }}
     runs-on: ubuntu-24.04
     timeout-minutes: 180
     environment:
       name: pr-e2e-no-approval
       deployment: false
     env:
-      VERSION: v0.0.0-${{ github.sha }}
+      VERSION: v0.0.0-${{ github.event_name == 'pull_request' && github.event.pull_request.head.sha || github.sha }}
       BUILD_REGISTRY: provider-btp-benchmark
       PLATFORMS: linux_amd64
     steps:
@@ -83,13 +93,13 @@ jobs:
       - name: Check out source
         uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
-          ref: ${{ github.sha }}
+          ref: ${{ github.event_name == 'pull_request' && github.event.pull_request.head.sha || github.sha }}
           submodules: true
           persist-credentials: false
 
-      - name: Assert source matches dispatched revision
+      - name: Assert source matches event revision
         env:
-          EXPECTED_SHA: ${{ github.sha }}
+          EXPECTED_SHA: ${{ github.event_name == 'pull_request' && github.event.pull_request.head.sha || github.sha }}
         run: |
           set -euo pipefail
           actual="$(git rev-parse HEAD)"
@@ -187,6 +197,47 @@ jobs:
           if-no-files-found: error
           retention-days: 7
           compression-level: 0
+
+      - name: Publish benchmark archive link on pull request
+        if: ${{ !cancelled() && github.event_name == 'pull_request' }}
+        env:
+          GH_TOKEN: ${{ github.token }}
+          PR_NUMBER: ${{ github.event.pull_request.number }}
+          PR_HEAD_SHA: ${{ github.event.pull_request.head.sha }}
+          ARTIFACT_URL: ${{ steps.archive.outputs.artifact-url }}
+          TEST_OUTCOME: ${{ steps.test.outcome }}
+          TEST_EXIT_CODE: ${{ steps.test.outputs.exit-code }}
+        run: |
+          set -euo pipefail
+          if [[ -n "$ARTIFACT_URL" ]]; then
+            archive_link="[Download the metrics archive]($ARTIFACT_URL) (available for 7 days; GitHub authentication and repository access are required)."
+          else
+            archive_link='_No downloadable metrics archive was published for this run._'
+          fi
+          body="$(cat <<EOF
+          <!-- btp-synthetic-benchmark-archive -->
+          ### BTP benchmark metrics archive
+
+          $archive_link
+
+          - Benchmark action outcome: \`${TEST_OUTCOME:-not started}\` (CLI exit code: \`${TEST_EXIT_CODE:-unavailable}\`).
+          - Run: [${GITHUB_RUN_ID} attempt ${GITHUB_RUN_ATTEMPT}](${GITHUB_SERVER_URL}/${GITHUB_REPOSITORY}/actions/runs/${GITHUB_RUN_ID})
+          - PR head revision tested: \`${PR_HEAD_SHA}\`.
+          EOF
+          )"
+          existing_comment_id="$(gh api --paginate \
+            "repos/$GITHUB_REPOSITORY/issues/$PR_NUMBER/comments?per_page=100" \
+            --jq '.[] | select(.user.login == "github-actions[bot]" and (.body | contains("<!-- btp-synthetic-benchmark-archive -->"))) | .id' \
+            | tail -n 1)"
+          if [[ -n "$existing_comment_id" ]]; then
+            gh api --method PATCH \
+              "repos/$GITHUB_REPOSITORY/issues/comments/$existing_comment_id" \
+              -f body="$body" >/dev/null
+          else
+            gh api --method POST \
+              "repos/$GITHUB_REPOSITORY/issues/$PR_NUMBER/comments" \
+              -f body="$body" >/dev/null
+          fi
 
       - name: Fail if no archive was produced
         if: ${{ !cancelled() && steps.test.outputs.archive == '' }}
