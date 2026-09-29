@@ -1,0 +1,106 @@
+schema_version: v1
+measurements:
+  - id: subaccount-ready-mean
+    label: Mean time until Subaccount is Ready (client-observed)
+    source: raw_k6
+    metric: xp_time_to_ready
+    match:
+      resource_kind: Subaccount
+    statistic: mean
+    unit: ms
+  - id: subaccount-delete-mean
+    label: Mean time until Subaccount Kubernetes object is absent (client-observed)
+    source: raw_k6
+    metric: xp_time_to_delete
+    match:
+      resource_kind: Subaccount
+    statistic: mean
+    unit: ms
+  - id: directory-ready-mean
+    label: Mean time until Directory is Ready (client-observed)
+    source: raw_k6
+    metric: xp_time_to_ready
+    match:
+      resource_kind: Directory
+    statistic: mean
+    unit: ms
+  - id: directory-delete-mean
+    label: Mean time until Directory Kubernetes object is absent (client-observed)
+    source: raw_k6
+    metric: xp_time_to_delete
+    match:
+      resource_kind: Directory
+    statistic: mean
+    unit: ms
+  - id: entitlement-ready-mean
+    label: Mean time until Entitlement is Ready (client-observed)
+    source: raw_k6
+    metric: xp_time_to_ready
+    match:
+      resource_kind: Entitlement
+    statistic: mean
+    unit: ms
+  - id: entitlement-delete-mean
+    label: Mean time until Entitlement Kubernetes object is absent (client-observed)
+    source: raw_k6
+    metric: xp_time_to_delete
+    match:
+      resource_kind: Entitlement
+    statistic: mean
+    unit: ms
+  - id: directory-entitlement-ready-mean
+    label: Mean time until DirectoryEntitlement is Ready (client-observed)
+    source: raw_k6
+    metric: xp_time_to_ready
+    match:
+      resource_kind: DirectoryEntitlement
+    statistic: mean
+    unit: ms
+  - id: directory-entitlement-delete-mean
+    label: Mean time until DirectoryEntitlement Kubernetes object is absent (client-observed)
+    source: raw_k6
+    metric: xp_time_to_delete
+    match:
+      resource_kind: DirectoryEntitlement
+    statistic: mean
+    unit: ms
+  - id: subaccount-api-credential-ready-mean
+    label: Mean time until SubaccountApiCredential is Ready (client-observed)
+    source: raw_k6
+    metric: xp_time_to_ready
+    match:
+      resource_kind: SubaccountApiCredential
+    statistic: mean
+    unit: ms
+  - id: subaccount-api-credential-delete-mean
+    label: Mean time until SubaccountApiCredential Kubernetes object is absent (client-observed)
+    source: raw_k6
+    metric: xp_time_to_delete
+    match:
+      resource_kind: SubaccountApiCredential
+    statistic: mean
+    unit: ms
+  - id: iterations
+    label: Completed benchmark iterations
+    source: raw_k6
+    metric: iterations
+    match:
+      scenario: create_delete
+    statistic: sum
+    unit: count
+  - id: resources-created
+    label: Kubernetes resource objects accepted for creation
+    source: raw_k6
+    metric: xp_resources_created
+    match:
+      scenario: create_delete
+    statistic: sum
+    unit: count
+  - id: resources-deleted
+    label: Kubernetes resource delete requests accepted
+    source: raw_k6
+    metric: xp_resources_deleted
+    match:
+      scenario: create_delete
+    statistic: sum
+    unit: count
