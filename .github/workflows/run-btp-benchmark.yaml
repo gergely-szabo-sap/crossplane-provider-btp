@@ -1,7 +1,6 @@
 name: BTP synthetic benchmark
 
 on:
-  pull_request_target:
   workflow_dispatch:
     inputs:
       confirm_dedicated_account:
@@ -12,51 +11,20 @@ on:
 
 permissions:
   contents: read
-  pull-requests: write
 
 concurrency:
-  group: btp-benchmark-${{ github.event.pull_request.number || github.ref }}
+  group: btp-benchmark-${{ github.ref }}
   cancel-in-progress: true
 
 jobs:
-  approval:
-    if: github.event_name == 'pull_request_target'
-    runs-on: ubuntu-24.04
-    environment:
-      name: pr-e2e-approval
-      deployment: false
-    outputs:
-      reviewed-sha: ${{ steps.pin.outputs.sha }}
-    steps:
-      - name: Confirm reviewed head is still current
-        id: pin
-        env:
-          GH_TOKEN: ${{ github.token }}
-          EVENT_SHA: ${{ github.event.pull_request.head.sha }}
-          PR_NUMBER: ${{ github.event.pull_request.number }}
-          REPOSITORY: ${{ github.repository }}
-        run: |
-          set -euo pipefail
-          current="$(gh api "repos/${REPOSITORY}/pulls/${PR_NUMBER}" --jq '.head.sha')"
-          if [[ "$current" != "$EVENT_SHA" ]]; then
-            echo '::error::PR head changed after this run was created; rerun to request fresh approval.'
-            exit 1
-          fi
-          echo "sha=$current" >> "$GITHUB_OUTPUT"
-
   benchmark:
-    needs: approval
-    if: >-
-      always() &&
-      ((github.event_name == 'pull_request_target' && needs.approval.result == 'success') ||
-       github.event_name == 'workflow_dispatch')
     runs-on: ubuntu-24.04
     timeout-minutes: 180
     environment:
       name: pr-e2e-no-approval
       deployment: false
     env:
-      VERSION: v0.0.0-${{ github.event_name == 'pull_request_target' && needs.approval.outputs.reviewed-sha || github.sha }}
+      VERSION: v0.0.0-${{ github.sha }}
       BUILD_REGISTRY: provider-btp-benchmark
       PLATFORMS: linux_amd64
     steps:
@@ -102,21 +70,20 @@ jobs:
             echo '::error::TECHNICAL_USER_EMAIL and SECOND_DIRECTORY_ADMIN_EMAIL must identify distinct BTP users.'; exit 1;
           }
 
-      - name: Check out reviewed source
+      - name: Check out source
         uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
-          ref: ${{ github.event_name == 'pull_request_target' && needs.approval.outputs.reviewed-sha || github.sha }}
+          ref: ${{ github.sha }}
           submodules: true
           persist-credentials: false
-          allow-unsafe-pr-checkout: ${{ github.event_name == 'pull_request_target' }}
 
-      - name: Assert source matches reviewed revision
+      - name: Assert source matches dispatch revision
         env:
-          EXPECTED_SHA: ${{ github.event_name == 'pull_request_target' && needs.approval.outputs.reviewed-sha || github.sha }}
+          EXPECTED_SHA: ${{ github.sha }}
         run: |
           set -euo pipefail
           actual="$(git rev-parse HEAD)"
-          [[ "$actual" == "$EXPECTED_SHA" ]] || { echo '::error::checkout did not match reviewed SHA'; exit 1; }
+          [[ "$actual" == "$EXPECTED_SHA" ]] || { echo '::error::checkout did not match dispatch SHA'; exit 1; }
 
       - name: Compare BTP environment fingerprints (values withheld)
         env:
@@ -142,10 +109,10 @@ jobs:
         with:
           go-version-file: go.mod
 
-      - name: Build reviewed provider image
+      - name: Build dispatched provider image
         run: make build BUILD_REGISTRY="$BUILD_REGISTRY" PLATFORMS="$PLATFORMS" VERSION="$VERSION"
 
-      - name: Package reviewed provider for Crossplane
+      - name: Package dispatched provider for Crossplane
         run: make xpkg.build.provider-btp BUILD_REGISTRY="$BUILD_REGISTRY" PLATFORMS="$PLATFORMS" VERSION="$VERSION"
 
       - name: Validate exact single-image package
@@ -198,52 +165,6 @@ jobs:
         id: verify
         if: ${{ !cancelled() && steps.report.outputs.report-json != '' }}
         run: ./benchmarks/btp/verify-report.sh "${{ steps.report.outputs.report-json }}"
-
-      - name: Comment benchmark report on pull request
-        if: >-
-          ${{ always() && !cancelled() && github.event_name == 'pull_request_target' &&
-          steps.report.outputs.report-markdown != '' }}
-        uses: actions/github-script@3a2844b7e9c422d3c10d287c895573f7108da1b3 # v9.0.0
-        env:
-          REPORT_MARKDOWN: ${{ steps.report.outputs.report-markdown }}
-          RUN_URL: ${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}
-        with:
-          script: |
-            const fs = require('fs');
-            const marker = '<!-- btp-synthetic-benchmark-report -->';
-            const reportPath = process.env.REPORT_MARKDOWN;
-
-            if (!fs.existsSync(reportPath)) {
-              core.warning('Benchmark report Markdown is unavailable; no pull request comment was created.');
-              return;
-            }
-
-            const report = fs.readFileSync(reportPath, 'utf8');
-            const body = `${marker}\n## BTP synthetic benchmark report\n\n${report}\n\n[Workflow run](${process.env.RUN_URL})`;
-            const { owner, repo } = context.repo;
-            const issue_number = context.payload.pull_request.number;
-            const comments = await github.paginate(github.rest.issues.listComments, {
-              owner,
-              repo,
-              issue_number,
-              per_page: 100,
-            });
-            const existing = comments.find((comment) =>
-              comment.user.login === 'github-actions[bot]' && comment.body.includes(marker),
-            );
-
-            if (existing) {
-              await github.rest.issues.updateComment({
-                owner,
-                repo,
-                comment_id: existing.id,
-                body,
-              });
-              core.info(`Updated benchmark report comment ${existing.id}.`);
-            } else {
-              const comment = await github.rest.issues.createComment({ owner, repo, issue_number, body });
-              core.info(`Created benchmark report comment ${comment.data.id}.`);
-            }
 
       - name: Fail if no archive was produced
         if: ${{ !cancelled() && steps.test.outputs.archive == '' }}
