@@ -63,10 +63,10 @@ function harness({ createFailure, readyFailure, readyTimeout = false, deleteFail
 
 const kinds = ['Subaccount', 'Directory', 'Entitlement', 'DirectoryEntitlement', 'SubaccountApiCredential'];
 const happy = harness();
-assert.equal(happy.options.scenarios.default.executor, 'shared-iterations');
-assert.equal(happy.options.scenarios.default.vus, 1);
-assert.equal(happy.options.scenarios.default.iterations, 1);
-assert.equal(happy.options.scenarios.default.maxDuration, '1h');
+assert.equal(happy.options.scenarios.create_delete.executor, 'shared-iterations');
+assert.equal(happy.options.scenarios.create_delete.vus, 1);
+assert.equal(happy.options.scenarios.create_delete.iterations, 1);
+assert.equal(happy.options.scenarios.create_delete.maxDuration, '1h');
 happy.run();
 assert.deepEqual(happy.created.map((x) => x.kind), kinds);
 assert.deepEqual(happy.ready, kinds);
