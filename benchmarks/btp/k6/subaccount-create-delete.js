@@ -6,7 +6,7 @@ const xpTimeToDelete = new Trend('xp_time_to_delete', true);
 const xpLifecyclePhaseDuration = new Trend('xp_lifecycle_phase_duration', true);
 export const options = {
   scenarios: {
-    default: {
+    create_delete: {
       executor: 'shared-iterations',
       vus: 1,
       iterations: 1,
