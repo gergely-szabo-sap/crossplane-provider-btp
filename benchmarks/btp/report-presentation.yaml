@@ -10,6 +10,7 @@ measurements:
       container: package-runtime
     statistic: mean
     unit: cores
+    display_unit: millicores
   - id: provider-cpu-max
     label: Provider container maximum sampled CPU usage
     source: tsdb
@@ -20,6 +21,7 @@ measurements:
       container: package-runtime
     statistic: max
     unit: cores
+    display_unit: millicores
   - id: provider-memory-mean
     label: Provider container mean memory usage
     source: tsdb
@@ -30,6 +32,7 @@ measurements:
       container: package-runtime
     statistic: mean
     unit: bytes
+    display_unit: MiB
   - id: provider-memory-max
     label: Provider container maximum sampled memory usage
     source: tsdb
@@ -40,6 +43,7 @@ measurements:
       container: package-runtime
     statistic: max
     unit: bytes
+    display_unit: MiB
   - id: subaccount-ready-mean
     label: Mean time until Subaccount is Ready (client-observed)
     source: raw_k6
