@@ -6,19 +6,24 @@ export const options = {
       executor: 'shared-iterations',
       vus: 1,
       iterations: 1,
-      maxDuration: '1h',
+      maxDuration: '110m',
     },
+  },
+  thresholds: {
+    xp_lifecycle_success: ['rate==1'],
   },
 };
 
 const SETTINGS = {
   readyTimeout: Number(__ENV.XP_DIADROMOS_BTP_READY_TIMEOUT || '600'),
   deleteTimeout: Number(__ENV.XP_DIADROMOS_BTP_DELETE_TIMEOUT || '600'),
+  createBudget: Number(__ENV.XP_DIADROMOS_BTP_CREATE_BUDGET || '2700'),
+  cleanupBudget: Number(__ENV.XP_DIADROMOS_BTP_CLEANUP_BUDGET || '3000'),
   region: __ENV.XP_DIADROMOS_BTP_REGION || 'eu10',
   subaccountAdmin: __ENV.XP_DIADROMOS_BTP_SUBACCOUNT_ADMIN,
   secondDirectoryAdmin: __ENV.XP_DIADROMOS_BTP_SECOND_DIRECTORY_ADMIN,
   runId: __ENV.XP_DIADROMOS_BTP_RUN_ID || __ENV.GITHUB_RUN_ID,
-  attempt: __ENV.GITHUB_RUN_ATTEMPT || '1',
+  attempt: __ENV.XP_DIADROMOS_BTP_RUN_ATTEMPT || '1',
 };
 
 const ACCOUNT_API = 'account.btp.sap.crossplane.io/v1alpha1';

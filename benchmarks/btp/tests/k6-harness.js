@@ -24,7 +24,7 @@ function loadSources() {
 }
 
 function makeHarness({
-  env = {}, createFailure, readyFailure, deleteFailure,
+  env = {}, createFailure, readyFailure, deleteFailure, holdDeleted = false,
   subaccountAdmin = 'benchmark@example.invalid',
   secondDirectoryAdmin = 'directory-admin-two',
   now = 1_700_000_000_000,
@@ -60,7 +60,7 @@ function makeHarness({
       const kind = groupKind.split('.')[0];
       deleted.push({ kind, name });
       if (deleteFailure === kind) throw new Error('synthetic delete failure');
-      objects.delete(`${kind}/${name}`);
+      if (!holdDeleted) objects.delete(`${kind}/${name}`);
     },
   };
   class Kubernetes { constructor() { return client; } }
@@ -78,6 +78,7 @@ function makeHarness({
     k8s: { Kubernetes },
     Counter: Metric,
     Gauge: Metric,
+    Rate: Metric,
     Trend: Metric,
   };
   const { helperSource, scenarioSource } = loadSources();
