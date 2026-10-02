@@ -1,4 +1,4 @@
-# Report-only BTP benchmark. Creates a real Subaccount in the dedicated test account.
+# Report-only BTP benchmark. Creates one serial lifecycle set in the dedicated test account.
 environments:
   local:
     type: kind
@@ -56,11 +56,12 @@ k6:
   parallelism: 1
   wait_timeout: 2h
   env:
-    XP_DIADROMOS_BTP_ITERATIONS: "1"
-    XP_DIADROMOS_BTP_VUS: "1"
     XP_DIADROMOS_BTP_READY_TIMEOUT: "600"
     XP_DIADROMOS_BTP_DELETE_TIMEOUT: "600"
+    XP_DIADROMOS_BTP_CREATE_BUDGET: "2700"
+    XP_DIADROMOS_BTP_CLEANUP_BUDGET: "3000"
     XP_DIADROMOS_BTP_RUN_ID: "${GITHUB_RUN_ID}"
+    XP_DIADROMOS_BTP_RUN_ATTEMPT: "${GITHUB_RUN_ATTEMPT}"
     XP_DIADROMOS_BTP_REGION: eu10
     XP_DIADROMOS_BTP_SUBACCOUNT_ADMIN: ${TECHNICAL_USER_EMAIL}
     XP_DIADROMOS_BTP_SECOND_DIRECTORY_ADMIN: ${SECOND_DIRECTORY_ADMIN_EMAIL}
