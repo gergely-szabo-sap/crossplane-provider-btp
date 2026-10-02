@@ -243,10 +243,13 @@ def main() -> int:
         if json_with.read_bytes() != json_without.read_bytes():
             fail("presentation selection changed CI JSON under the same dashboard override")
         report = json.loads(json_with.read_text(encoding="utf-8"))
-        if report.get("status") != "not_evaluated" or report.get("policy") is not None or report.get("checks") != []:
+        checks = report.get("checks")
+        if report.get("status") != "not_evaluated" or report.get("policy") is not None or checks not in (None, []):
             fail("report-only status, policy, or checks contract is invalid")
         rows = report_rows(md_with.read_text(encoding="utf-8"))
-        if not rows or any(value.startswith("Unavailable") or value.lower() in ("n/a", "unavailable") for _, value in rows):
+        if len(rows) != 28:
+            fail(f"presentation has {len(rows)} rows; expected exactly 28")
+        if any(value.startswith("Unavailable") or value.lower() in ("n/a", "unavailable") for _, value in rows):
             fail("one or more presentation rows are unavailable")
         verifier = Path(__file__).with_name("verify-report.sh")
         run(["bash", str(verifier), str(json_with)])
