@@ -210,6 +210,10 @@ def main() -> int:
         if args.execution_cli is not None:
             check_version(execution_cli, EXPECTED_EXECUTION, "execution")
         queries = dashboard_queries(dashboard)
+        required_panels = {"4_0", "4_1", "4_2", "5_0", "5_1", "5_2"}
+        found_panels = {panel for panel, _ in queries}
+        if not required_panels.issubset(found_panels):
+            fail(f"dashboard is missing diagnostic panels: {sorted(required_panels - found_panels)}")
 
         stats_path = out / "dashboard-stats.json"
         run([str(execution_cli), "metrics", "stats", "--input", str(archive), "--dashboard", str(dashboard)], output=stats_path)
