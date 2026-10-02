@@ -196,7 +196,7 @@ const xpTimeToReady = new Trend('xp_time_to_ready', true);
 const xpTimeToDelete = new Trend('xp_time_to_delete', true);
 const xpLifecyclePhaseDuration = new Trend('xp_lifecycle_phase_duration', true);
 
-function safeNamePart(value, limit = 16) {
+function safeNamePart(value, limit) {
   const normalized = String(value).toLowerCase()
     .replace(/[^a-z0-9-]/g, '-')
     .replace(/-+/g, '-')
@@ -206,20 +206,24 @@ function safeNamePart(value, limit = 16) {
   return normalized || 'run';
 }
 
-/** Return stable, DNS-safe identities with reserved room for each kind prefix. */
-export function buildResourceNames(runId, attempt, now = Date.now()) {
+/** Return stable DNS-safe identities while reserving space for kind and instance. */
+export function buildResourceNames(runId, attempt, instance, now = Date.now()) {
   if (!runId) throw new Error('Set XP_DIADROMOS_BTP_RUN_ID to identify owned resources');
-  const suffix = `${safeNamePart(runId)}-${safeNamePart(attempt || '1')}-${Number(now).toString(36)}`;
-  const name = (prefix, max = 63) => `${prefix}${suffix}`.slice(0, max).replace(/-+$/g, '');
+  if (!Number.isInteger(instance) || instance < 1 || instance > 5) {
+    throw new Error('Resource instance must be an integer from 1 through 5');
+  }
+  const clock = Number(now).toString(36);
+  const identity = `${safeNamePart(runId, 10)}-${safeNamePart(attempt || '1', 5)}-${clock}-${instance}`;
+  const name = (prefix) => `${prefix}${identity}`;
   return {
-    suffix,
+    suffix: identity,
     Subaccount: name('xp-btp-bench-'),
     Directory: name('xp-btp-bench-dir-'),
     Entitlement: name('xp-btp-bench-ent-'),
     DirectoryEntitlement: name('xp-btp-bench-dirent-'),
     SubaccountApiCredential: name('xp-btp-bench-api-'),
-    subdomain: name('xpbtpbench-', 63),
-    connectionSecret: name('xp-btp-bench-api-', 55) + '-secret',
+    subdomain: name('xpbtpbench-'),
+    connectionSecret: name('xp-btp-bench-api-') + '-secret',
   };
 }
 
