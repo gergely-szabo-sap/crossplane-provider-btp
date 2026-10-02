@@ -17,7 +17,7 @@ import urllib.error
 import urllib.parse
 import urllib.request
 
-EXPECTED_EXECUTION = "0.8.0"
+EXPECTED_EXECUTION = "0.8.1"
 EXPECTED_REPORT = "0.8.1"
 MAX_RESULT_BYTES = 16 * 1024 * 1024
 
@@ -113,6 +113,11 @@ def finite_values(result: object) -> tuple[int, list[dict[str, str]]]:
                 number = float(sample[1])
             except (TypeError, ValueError):
                 fail("loopback query has a non-numeric value")
+            if math.isnan(number):
+                # Prometheus uses NaN for undefined rate-of-sum / rate-of-count
+                # windows (for example, an idle histogram window). It is not a
+                # measurement and must not be treated as zero or as a failure.
+                continue
             if not math.isfinite(number):
                 fail("loopback query has a non-finite value")
             count += 1
