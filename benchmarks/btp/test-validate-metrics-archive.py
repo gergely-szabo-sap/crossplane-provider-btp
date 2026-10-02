@@ -73,6 +73,12 @@ def invoke(*, version="0.8.1", fail=False, malformed=False, unavailable=False, e
             ("0_1", "Iterations", 'xp_diadromos_k6_iterations_total{scenario="create_delete"}'),
             ("2_0", "Ready", 'xp_diadromos_k6_xp_time_to_ready_mean{scenario="create_delete"}'),
             ("2_2", "Absent", 'xp_diadromos_k6_xp_time_to_delete_mean{scenario="create_delete"}'),
+            ("4_0", "Reconcile duration", 'sum by (controller, archive_filename) (rate(controller_runtime_reconcile_time_seconds_sum{job="provider"}[5m])) / sum by (controller, archive_filename) (rate(controller_runtime_reconcile_time_seconds_count{job="provider"}[5m]))'),
+            ("4_1", "Queue depth", 'sum by (controller, archive_filename) (workqueue_depth{job="provider"})'),
+            ("4_2", "Queue wait", 'sum by (controller, archive_filename) (rate(workqueue_queue_duration_seconds_sum{job="provider"}[5m])) / sum by (controller, archive_filename) (rate(workqueue_queue_duration_seconds_count{job="provider"}[5m]))'),
+            ("5_0", "Request phases", 'xp_diadromos_k6_xp_lifecycle_phase_duration_mean{scenario="create_delete",stage=~"create_request|delete_request"}'),
+            ("5_1", "Wait phases", 'xp_diadromos_k6_xp_lifecycle_phase_duration_mean{scenario="create_delete",stage=~"readiness|kubernetes_absence_wait"}'),
+            ("5_2", "External operations", 'sum by (operation, archive_filename) (rate(upjet_resource_ext_api_duration_sum{job="provider"}[5m])) / sum by (operation, archive_filename) (rate(upjet_resource_ext_api_duration_count{job="provider"}[5m]))'),
         ]
         panels = []
         for panel_id, name, query in panel_specs:
@@ -107,7 +113,7 @@ def invoke(*, version="0.8.1", fail=False, malformed=False, unavailable=False, e
             raise AssertionError(f"unexpected result {result.returncode}: {result.stderr}")
         if expected == 0:
             summary = json.loads((out / "replay-summary.json").read_text())
-            assert summary["finite_query_samples"] == 4
+            assert summary["finite_query_samples"] == 10
             commands = [json.loads(line) for line in command_log.read_text().splitlines()]
             ci = [command for command in commands if command[:3] == ["metrics", "stats", "--ci"]]
             assert len(ci) == 2 and ci[0][ci[0].index("--dashboard") + 1] == ci[1][ci[1].index("--dashboard") + 1]
