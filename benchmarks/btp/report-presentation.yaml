@@ -44,13 +44,31 @@ measurements:
     statistic: max
     unit: bytes
     display_unit: MiB
+  - id: iteration-duration-mean
+    label: Complete lifecycle iteration duration
+    source: raw_k6
+    metric: iteration_duration
+    match:
+      scenario: create_delete
+    statistic: mean
+    unit: ms
   - id: subaccount-ready-mean
     label: Mean time until Subaccount is Ready (client-observed)
     source: raw_k6
     metric: xp_time_to_ready
     match:
       resource_kind: Subaccount
+      scenario: create_delete
     statistic: mean
+    unit: ms
+  - id: subaccount-ready-p50
+    label: Median client-observed Subaccount readiness
+    source: raw_k6
+    metric: xp_time_to_ready
+    match:
+      resource_kind: Subaccount
+      scenario: create_delete
+    statistic: p50
     unit: ms
   - id: subaccount-delete-mean
     label: Mean time until Subaccount Kubernetes object is absent (client-observed)
@@ -58,6 +76,7 @@ measurements:
     metric: xp_time_to_delete
     match:
       resource_kind: Subaccount
+      scenario: create_delete
     statistic: mean
     unit: ms
   - id: directory-ready-mean
@@ -66,7 +85,17 @@ measurements:
     metric: xp_time_to_ready
     match:
       resource_kind: Directory
+      scenario: create_delete
     statistic: mean
+    unit: ms
+  - id: directory-ready-p50
+    label: Median client-observed Directory readiness
+    source: raw_k6
+    metric: xp_time_to_ready
+    match:
+      resource_kind: Directory
+      scenario: create_delete
+    statistic: p50
     unit: ms
   - id: directory-delete-mean
     label: Mean time until Directory Kubernetes object is absent (client-observed)
@@ -74,6 +103,7 @@ measurements:
     metric: xp_time_to_delete
     match:
       resource_kind: Directory
+      scenario: create_delete
     statistic: mean
     unit: ms
   - id: entitlement-ready-mean
@@ -82,7 +112,17 @@ measurements:
     metric: xp_time_to_ready
     match:
       resource_kind: Entitlement
+      scenario: create_delete
     statistic: mean
+    unit: ms
+  - id: entitlement-ready-p50
+    label: Median client-observed Entitlement readiness
+    source: raw_k6
+    metric: xp_time_to_ready
+    match:
+      resource_kind: Entitlement
+      scenario: create_delete
+    statistic: p50
     unit: ms
   - id: entitlement-delete-mean
     label: Mean time until Entitlement Kubernetes object is absent (client-observed)
@@ -90,6 +130,7 @@ measurements:
     metric: xp_time_to_delete
     match:
       resource_kind: Entitlement
+      scenario: create_delete
     statistic: mean
     unit: ms
   - id: directory-entitlement-ready-mean
@@ -98,7 +139,17 @@ measurements:
     metric: xp_time_to_ready
     match:
       resource_kind: DirectoryEntitlement
+      scenario: create_delete
     statistic: mean
+    unit: ms
+  - id: directory-entitlement-ready-p50
+    label: Median client-observed DirectoryEntitlement readiness
+    source: raw_k6
+    metric: xp_time_to_ready
+    match:
+      resource_kind: DirectoryEntitlement
+      scenario: create_delete
+    statistic: p50
     unit: ms
   - id: directory-entitlement-delete-mean
     label: Mean time until DirectoryEntitlement Kubernetes object is absent (client-observed)
@@ -106,6 +157,7 @@ measurements:
     metric: xp_time_to_delete
     match:
       resource_kind: DirectoryEntitlement
+      scenario: create_delete
     statistic: mean
     unit: ms
   - id: subaccount-api-credential-ready-mean
@@ -114,7 +166,17 @@ measurements:
     metric: xp_time_to_ready
     match:
       resource_kind: SubaccountApiCredential
+      scenario: create_delete
     statistic: mean
+    unit: ms
+  - id: subaccount-api-credential-ready-p50
+    label: Median client-observed SubaccountApiCredential readiness
+    source: raw_k6
+    metric: xp_time_to_ready
+    match:
+      resource_kind: SubaccountApiCredential
+      scenario: create_delete
+    statistic: p50
     unit: ms
   - id: subaccount-api-credential-delete-mean
     label: Mean time until SubaccountApiCredential Kubernetes object is absent (client-observed)
@@ -122,6 +184,7 @@ measurements:
     metric: xp_time_to_delete
     match:
       resource_kind: SubaccountApiCredential
+      scenario: create_delete
     statistic: mean
     unit: ms
   - id: iterations
@@ -147,4 +210,54 @@ measurements:
     match:
       scenario: create_delete
     statistic: sum
+    unit: count
+  - id: subaccount-reconcile-errors
+    label: Subaccount observed reconciliation errors
+    source: tsdb
+    metric: controller_runtime_reconcile_errors_total
+    match:
+      job: provider
+      namespace: crossplane-system
+      controller: managed/subaccount.account.btp.sap.crossplane.io
+    statistic: observed_increase
+    unit: count
+  - id: directory-reconcile-errors
+    label: Directory observed reconciliation errors
+    source: tsdb
+    metric: controller_runtime_reconcile_errors_total
+    match:
+      job: provider
+      namespace: crossplane-system
+      controller: managed/directory.account.btp.sap.crossplane.io
+    statistic: observed_increase
+    unit: count
+  - id: entitlement-reconcile-errors
+    label: Entitlement observed reconciliation errors
+    source: tsdb
+    metric: controller_runtime_reconcile_errors_total
+    match:
+      job: provider
+      namespace: crossplane-system
+      controller: managed/entitlement.account.btp.sap.crossplane.io
+    statistic: observed_increase
+    unit: count
+  - id: directory-entitlement-reconcile-errors
+    label: DirectoryEntitlement observed reconciliation errors
+    source: tsdb
+    metric: controller_runtime_reconcile_errors_total
+    match:
+      job: provider
+      namespace: crossplane-system
+      controller: managed/account.btp.sap.crossplane.io/v1alpha1, kind=directoryentitlement
+    statistic: observed_increase
+    unit: count
+  - id: subaccount-api-credential-reconcile-errors
+    label: SubaccountApiCredential observed reconciliation errors
+    source: tsdb
+    metric: controller_runtime_reconcile_errors_total
+    match:
+      job: provider
+      namespace: crossplane-system
+      controller: managed/security.btp.sap.crossplane.io/v1alpha1, kind=subaccountapicredential
+    statistic: observed_increase
     unit: count

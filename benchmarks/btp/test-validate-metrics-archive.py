@@ -46,10 +46,16 @@ if args[:2] == ["metrics", "stats"]:
         print(json.dumps({"archives":[{"archive":{"complete":True,"first_sample":"2026-10-02T14:49:27Z","last_sample":"2026-10-02T15:13:27Z"}}]}))
         raise SystemExit(0)
     report = json.loads(pathlib.Path(os.environ["VALID_REPORT"]).read_text())
+    checks = os.environ.get("STUB_CHECKS", "array")
+    if checks == "null":
+        report["checks"] = None
+    elif checks == "nonempty":
+        report["checks"] = [{"status": "failed"}]
     if os.environ.get("STUB_UNAVAILABLE"):
-        md = "| Measurement | Value |\n| --- | ---: |\n| A measurement | Unavailable — missing evidence |\n"
+        rows = [(f"Measurement {i}", "Unavailable — missing evidence") for i in range(28)]
     else:
-        md = "| Measurement | Value |\n| --- | ---: |\n| A measurement | 4 ms |\n"
+        rows = [(f"Measurement {i}", "4 ms") for i in range(28)]
+    md = "| Measurement | Value |\n| --- | ---: |\n" + "".join(f"| {label} | {value} |\n" for label, value in rows)
     pathlib.Path(args[args.index("--output") + 1]).write_text(json.dumps(report))
     pathlib.Path(args[args.index("--summary-output") + 1]).write_text(md)
     raise SystemExit(0)
@@ -57,7 +63,7 @@ raise SystemExit(2)
 '''
 
 
-def invoke(*, version="0.8.1", fail=False, malformed=False, unavailable=False, expected=0):
+def invoke(*, version="0.8.1", fail=False, malformed=False, unavailable=False, checks="array", expected=0):
     with tempfile.TemporaryDirectory(prefix="btp-replay-test-") as directory:
         root = Path(directory)
         cli = root / "xp-diadromos"
@@ -105,6 +111,7 @@ def invoke(*, version="0.8.1", fail=False, malformed=False, unavailable=False, e
         if fail: env["STUB_FAIL"] = "command"
         if malformed: env["STUB_MALFORMED"] = "1"
         if unavailable: env["STUB_UNAVAILABLE"] = "1"
+        env["STUB_CHECKS"] = checks
         command = [sys.executable, str(VALIDATOR), "--report-cli", str(cli),
                    "--archive", str(archive), "--presentation", str(presentation),
                    "--dashboard", str(dashboard), "--output-dir", str(out)]
@@ -114,6 +121,7 @@ def invoke(*, version="0.8.1", fail=False, malformed=False, unavailable=False, e
         if expected == 0:
             summary = json.loads((out / "replay-summary.json").read_text())
             assert summary["finite_query_samples"] == 10
+            assert summary["presentation_rows"] == 28
             commands = [json.loads(line) for line in command_log.read_text().splitlines()]
             ci = [command for command in commands if command[:3] == ["metrics", "stats", "--ci"]]
             assert len(ci) == 2 and ci[0][ci[0].index("--dashboard") + 1] == ci[1][ci[1].index("--dashboard") + 1]
@@ -128,6 +136,8 @@ def main():
     invoke(fail=True, expected=1)
     invoke(malformed=True, expected=1)
     invoke(unavailable=True, expected=1)
+    invoke(checks="null")
+    invoke(checks="nonempty", expected=1)
     print("Archive replay validator synthetic tests passed.")
 
 
