@@ -75,7 +75,7 @@ function makeHarness({
   class Kubernetes { constructor() { return client; } }
   const context = {
     __ENV: {
-      XP_DIADROMOS_BTP_RUN_ID: 'offline-test',
+      XP_DIADROMOS_BTP_RUN_ID: '1234567890',
       XP_DIADROMOS_BTP_SUBACCOUNT_ADMIN: subaccountAdmin,
       XP_DIADROMOS_BTP_SECOND_DIRECTORY_ADMIN: secondDirectoryAdmin,
       GITHUB_RUN_ATTEMPT: '1',
