@@ -14,10 +14,6 @@ on:
 permissions:
   contents: read
 
-concurrency:
-  group: btp-benchmark-${{ github.ref }}
-  cancel-in-progress: true
-
 jobs:
   pr-notice:
     if: ${{ github.event_name == 'pull_request' && github.event.pull_request.head.repo.full_name != github.repository }}
@@ -27,6 +23,9 @@ jobs:
         run: echo 'Fork PRs do not receive BTP credentials, so their benchmark is skipped. Automatic benchmarks run only for non-draft same-repository PRs targeting the default branch.'
 
   benchmark:
+    concurrency:
+      group: btp-benchmark-dedicated-account
+      cancel-in-progress: false
     outputs:
       metrics_archive_url: ${{ steps.archive.outputs.artifact-url }}
       test_outcome: ${{ steps.test.outcome }}

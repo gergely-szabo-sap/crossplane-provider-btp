@@ -196,24 +196,20 @@ const xpTimeToReady = new Trend('xp_time_to_ready', true);
 const xpTimeToDelete = new Trend('xp_time_to_delete', true);
 const xpLifecyclePhaseDuration = new Trend('xp_lifecycle_phase_duration', true);
 
-function safeNamePart(value, limit) {
-  const normalized = String(value).toLowerCase()
-    .replace(/[^a-z0-9-]/g, '-')
-    .replace(/-+/g, '-')
-    .replace(/^-+|-+$/g, '')
-    .slice(0, limit)
-    .replace(/-+$/g, '');
-  return normalized || 'run';
-}
-
-/** Return stable DNS-safe identities while reserving space for kind and instance. */
-export function buildResourceNames(runId, attempt, instance, now = Date.now()) {
-  if (!runId) throw new Error('Set XP_DIADROMOS_BTP_RUN_ID to identify owned resources');
+/** Return stable DNS-safe identities derived only from the run and instance. */
+export function buildResourceNames(runId, attempt, instance) {
+  const runIdentity = String(runId ?? '');
+  const attemptIdentity = String(attempt || '1');
+  if (!/^\d{1,20}$/.test(runIdentity)) {
+    throw new Error('XP_DIADROMOS_BTP_RUN_ID must be a 1-20 digit numeric identifier');
+  }
+  if (!/^\d{1,10}$/.test(attemptIdentity)) {
+    throw new Error('XP_DIADROMOS_BTP_RUN_ATTEMPT must be a 1-10 digit numeric identifier');
+  }
   if (!Number.isInteger(instance) || instance < 1 || instance > 5) {
     throw new Error('Resource instance must be an integer from 1 through 5');
   }
-  const clock = Number(now).toString(36);
-  const identity = `${safeNamePart(runId, 10)}-${safeNamePart(attempt || '1', 5)}-${clock}-${instance}`;
+  const identity = `${runIdentity}-${attemptIdentity}-${instance}`;
   const name = (prefix) => `${prefix}${identity}`;
   return {
     suffix: identity,
