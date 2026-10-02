@@ -2,12 +2,26 @@ package benchmarks
 
 import (
 	"os"
+	"os/exec"
 	"path/filepath"
 	"strings"
 	"testing"
 
 	"gopkg.in/yaml.v3"
 )
+
+type presentationFile struct {
+	Measurements []struct {
+		ID          string            `yaml:"id"`
+		Label       string            `yaml:"label"`
+		Source      string            `yaml:"source"`
+		Metric      string            `yaml:"metric"`
+		Match       map[string]string `yaml:"match"`
+		Statistic   string            `yaml:"statistic"`
+		Unit        string            `yaml:"unit"`
+		DisplayUnit string            `yaml:"display_unit"`
+	} `yaml:"measurements"`
+}
 
 type dashboardFile struct {
 	Kind string `yaml:"kind"`
@@ -196,4 +210,155 @@ func TestBenchmarkDashboardSparseLifecycleMeasurements(t *testing.T) {
 	if strings.Contains(queries["5_2"], "resource_kind") || strings.Contains(queries["5_2"], "controller") {
 		t.Error("external-operation duration must not claim resource-kind or controller attribution")
 	}
+}
+
+func TestBenchmarkPresentationContract(t *testing.T) {
+	root := filepath.Join("..", "..")
+	content, err := os.ReadFile(filepath.Join(root, "benchmarks/btp/report-presentation.yaml"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	var presentation presentationFile
+	if err := yaml.Unmarshal(content, &presentation); err != nil {
+		t.Fatalf("parse presentation YAML: %v", err)
+	}
+	if len(presentation.Measurements) != 28 {
+		t.Fatalf("presentation has %d rows; want 28", len(presentation.Measurements))
+	}
+	wantControllers := []string{
+		"managed/subaccount.account.btp.sap.crossplane.io",
+		"managed/directory.account.btp.sap.crossplane.io",
+		"managed/entitlement.account.btp.sap.crossplane.io",
+		"managed/account.btp.sap.crossplane.io/v1alpha1, kind=directoryentitlement",
+		"managed/security.btp.sap.crossplane.io/v1alpha1, kind=subaccountapicredential",
+	}
+	kinds := []string{"Subaccount", "Directory", "Entitlement", "DirectoryEntitlement", "SubaccountApiCredential"}
+	errorRows := 0
+	for i, row := range presentation.Measurements {
+		if i < 4 && row.DisplayUnit == "" {
+			t.Errorf("CPU/memory row %s lost its supported display_unit", row.ID)
+		}
+		if row.Source == "raw_k6" && (row.Metric == "xp_time_to_ready" || row.Metric == "xp_time_to_delete") && row.Match["scenario"] != "create_delete" {
+			t.Errorf("lifecycle row %s lacks create_delete match", row.ID)
+		}
+		if strings.Contains(row.ID, "reconcile-errors") {
+			errorRows++
+			kindIndex := i - 23
+			if kindIndex < 0 || kindIndex >= len(kinds) {
+				t.Fatalf("unexpected reconciliation error row order at %d: %s", i, row.ID)
+			}
+			if row.Source != "tsdb" || row.Metric != "controller_runtime_reconcile_errors_total" || row.Statistic != "observed_increase" || row.Unit != "count" {
+				t.Errorf("invalid reconciliation error row %s", row.ID)
+			}
+			if row.Match["job"] != "provider" || row.Match["namespace"] != "crossplane-system" || row.Match["controller"] != wantControllers[kindIndex] {
+				t.Errorf("row %s has incorrect controller selector: %#v", row.ID, row.Match)
+			}
+		}
+	}
+	if errorRows != 5 {
+		t.Errorf("found %d reconciliation-error rows; want 5", errorRows)
+	}
+	for i, kind := range kinds {
+		mean, median := presentation.Measurements[5+i*3], presentation.Measurements[6+i*3]
+		if mean.Match["resource_kind"] != kind || median.Match["resource_kind"] != kind || median.Statistic != "p50" || mean.Unit != "ms" || median.Unit != "ms" {
+			t.Errorf("readiness mean/median pairing incorrect for %s", kind)
+		}
+	}
+	if row := presentation.Measurements[4]; row.ID != "iteration-duration-mean" || row.Source != "raw_k6" || row.Metric != "iteration_duration" || row.Match["scenario"] != "create_delete" || row.Statistic != "mean" || row.Unit != "ms" {
+		t.Errorf("invalid complete-iteration duration row: %#v", row)
+	}
+}
+
+func TestBenchmarkCommentSanitizerInlineStep(t *testing.T) {
+	root := filepath.Join("..", "..")
+	workflowBytes, err := os.ReadFile(filepath.Join(root, ".github/workflows/run-btp-benchmark.yaml"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	var workflow struct {
+		Jobs map[string]struct {
+			Steps []struct {
+				Name string `yaml:"name"`
+				Run  string `yaml:"run"`
+			} `yaml:"steps"`
+		} `yaml:"jobs"`
+	}
+	if err := yaml.Unmarshal(workflowBytes, &workflow); err != nil {
+		t.Fatalf("parse workflow YAML: %v", err)
+	}
+	var script string
+	for _, step := range workflow.Jobs["publish-archive-comment"].Steps {
+		if step.Name == "Prepare safe measurement table" {
+			script = step.Run
+		}
+	}
+	if script == "" || strings.Contains(script, "gh api") || strings.Contains(script, "Publish benchmark archive link") {
+		t.Fatal("could not isolate the named table-sanitizer step")
+	}
+
+	invoke := func(t *testing.T, report string, symlink bool, wantSuccess bool) string {
+		t.Helper()
+		dir := t.TempDir()
+		reportPath := filepath.Join(dir, "report.md")
+		if symlink {
+			target := filepath.Join(dir, "target.md")
+			if err := os.WriteFile(target, []byte(report), 0600); err != nil {
+				t.Fatal(err)
+			}
+			if err := os.Symlink(target, reportPath); err != nil {
+				t.Fatal(err)
+			}
+		} else if err := os.WriteFile(reportPath, []byte(report), 0600); err != nil {
+			t.Fatal(err)
+		}
+		tablePath := filepath.Join(dir, "table.md")
+		cmd := exec.Command("bash", "-euo", "pipefail", "-c", script)
+		cmd.Env = append(os.Environ(), "REPORT_PATH="+reportPath, "TABLE_PATH="+tablePath)
+		output, err := cmd.CombinedOutput()
+		if (err == nil) != wantSuccess {
+			t.Fatalf("sanitizer success=%v want %v; output: %s", err == nil, wantSuccess, output)
+		}
+		if err == nil {
+			result, readErr := os.ReadFile(tablePath)
+			if readErr != nil {
+				t.Fatal(readErr)
+			}
+			return string(result)
+		}
+		return ""
+	}
+
+	rows := []string{"| Measurement | Value |", "| --- | ---: |"}
+	for i := 0; i < 28; i++ {
+		label := "Measurement " + strings.Repeat("x", i%4)
+		value := "1.25 ms"
+		if i == 0 {
+			label = `Readiness (client-observed)`
+			value = "1.419e+06 ms"
+		}
+		if i == 1 {
+			value = "0 count"
+		}
+		if i == 2 {
+			value = "Unavailable — missing evidence"
+		}
+		rows = append(rows, "| "+label+" | "+value+" |")
+	}
+	safe := strings.Join(rows, "\n") + "\n"
+	result := invoke(t, safe, false, true)
+	if !strings.Contains(result, "| Readiness (client-observed) | 1.419e+06 ms |") || strings.Count(result, "\n") != 30 {
+		t.Fatalf("safe full table was not rendered as expected: %q", result)
+	}
+	for _, hostile := range []string{
+		"| Measurement | Value |\n| --- | ---: |\n| X | [link](https://example.com) |\n",
+		"| Measurement | Value |\n| --- | ---: |\n| X | @mention |\n",
+		"| Measurement | Value |\n| --- | ---: |\n| X | `code` |\n",
+		"| Measurement | Value |\n| --- | ---: |\n| X | <b>html</b> |\n",
+		"| Measurement | Value |\n| --- | ---: |\n| X | 1 widgets |\n",
+		"| Measurement | Value |\n| --- | ---: |\n| X | 1 | extra |\n",
+	} {
+		invoke(t, hostile, false, false)
+	}
+	invoke(t, safe, true, false)
+	invoke(t, safe+strings.Repeat("x", 65537), false, false)
 }
