@@ -303,6 +303,8 @@ jobs:
 
           $measurements
 
+          Readiness values summarize five client-observed samples per kind; Kubernetes object absence is not proof of remote BTP deletion. Provider utilization and observed reconciliation-error increases are descriptive, not performance or zero-error gates.
+
           - Benchmark action outcome: \`${TEST_OUTCOME:-not started}\` (CLI exit code: \`${TEST_EXIT_CODE:-unavailable}\`).
           - Run: [${GITHUB_RUN_ID} attempt ${GITHUB_RUN_ATTEMPT}](${GITHUB_SERVER_URL}/${GITHUB_REPOSITORY}/actions/runs/${GITHUB_RUN_ID})
           - PR head revision tested: \`${PR_HEAD_SHA}\`.
