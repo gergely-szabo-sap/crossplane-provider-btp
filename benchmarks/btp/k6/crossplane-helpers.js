@@ -7,11 +7,8 @@ import { sleep } from 'k6';
 // can observe failures. They stay in the helpers because the helpers own
 // the lifecycle operations.
 //
-// Standard lifecycle trend metrics (xp_time_to_ready, xp_time_to_update,
-// xp_time_to_delete) are defined in the test scripts that need them. Tests
-// should pass a resource_kind tag so one dashboard can compare measurements
-// for different Crossplane resource kinds.
-// See AGENTS.md "Dynamic Custom Metrics" for the convention.
+// Standard lifecycle Trends used by the BTP owned-resource scenario are
+// declared here so the lifecycle implementation and its metrics stay together.
 export const xpResourcesCreated = new Counter('xp_resources_created'); // count
 export const xpResourcesDeleted = new Counter('xp_resources_deleted'); // count
 export const xpResourcesFailed = new Counter('xp_resources_failed');  // count
@@ -192,6 +189,143 @@ export class CrossplaneError extends Error {
 function groupKind(kind, apiVersion) {
   const group = apiVersion.split('/')[0];
   return `${kind}.${group}`;
+}
+
+const xpTimeToReady = new Trend('xp_time_to_ready', true);
+const xpTimeToDelete = new Trend('xp_time_to_delete', true);
+const xpLifecyclePhaseDuration = new Trend('xp_lifecycle_phase_duration', true);
+
+function safeNamePart(value, limit = 16) {
+  const normalized = String(value).toLowerCase()
+    .replace(/[^a-z0-9-]/g, '-')
+    .replace(/-+/g, '-')
+    .replace(/^-+|-+$/g, '')
+    .slice(0, limit)
+    .replace(/-+$/g, '');
+  return normalized || 'run';
+}
+
+/** Return stable, DNS-safe identities with reserved room for each kind prefix. */
+export function buildResourceNames(runId, attempt, now = Date.now()) {
+  if (!runId) throw new Error('Set XP_DIADROMOS_BTP_RUN_ID to identify owned resources');
+  const suffix = `${safeNamePart(runId)}-${safeNamePart(attempt || '1')}-${Number(now).toString(36)}`;
+  const name = (prefix, max = 63) => `${prefix}${suffix}`.slice(0, max).replace(/-+$/g, '');
+  return {
+    suffix,
+    Subaccount: name('xp-btp-bench-'),
+    Directory: name('xp-btp-bench-dir-'),
+    Entitlement: name('xp-btp-bench-ent-'),
+    DirectoryEntitlement: name('xp-btp-bench-dirent-'),
+    SubaccountApiCredential: name('xp-btp-bench-api-'),
+    subdomain: name('xpbtpbench-', 63),
+    connectionSecret: name('xp-btp-bench-api-', 55) + '-secret',
+  };
+}
+
+/** Apply shared ProviderConfig and scope defaults to a declared managed resource. */
+export function managedResource(kind, apiVersion, name, forProvider, options = {}) {
+  return {
+    apiVersion,
+    kind,
+    metadata: { name },
+    spec: {
+      providerConfigRef: { name: 'default' },
+      forProvider,
+      ...(options.connectionSecret ? {
+        writeConnectionSecretToRef: { name: options.connectionSecret, namespace: DEFAULT_NAMESPACE },
+      } : {}),
+    },
+  };
+}
+
+function failureCategory(error) {
+  if (isTimeoutError(error)) return { outcome: 'timeout', reason: 'timeout' };
+  if (error instanceof CrossplaneError || error?.name === 'CrossplaneError') {
+    return { outcome: 'failure', reason: 'reconcile_error' };
+  }
+  return { outcome: 'failure', reason: 'api_error' };
+}
+
+function recordLifecyclePhase(kind, phase, startedAt, outcome, reason, event) {
+  xpLifecyclePhaseDuration.add(Math.max(0, Date.now() - startedAt), {
+    resource_kind: kind, stage: phase, outcome, reason,
+  });
+  recordMeasurementPhase(phase, event, kind);
+}
+
+/**
+ * Create and observe every declared resource, then always attempt reverse-order
+ * cleanup of accepted creates. `buildManifests` owns domain declarations;
+ * this function owns instrumentation, registration, error handling and cleanup.
+ */
+export function runOwnedResourceLifecycle({ buildManifests, settings }) {
+  const manifests = buildManifests(settings);
+  const client = k8sClient();
+  const created = [];
+  const errors = [];
+
+  try {
+    for (const manifest of manifests) {
+      const { kind, metadata, apiVersion } = manifest;
+      const name = metadata.name;
+      const namespace = metadata.namespace || DEFAULT_NAMESPACE;
+      const operationStarted = Date.now();
+      let phase = 'create_request';
+      let phaseStarted = Date.now();
+      try {
+        measureOperation('create', kind, () => {
+          recordMeasurementPhase('create_request', 'requested', kind);
+          client.create(manifest);
+          created.push(manifest);
+          xpResourcesCreated.add(1);
+          recordLifecyclePhase(kind, phase, phaseStarted, 'success', 'none', 'accepted');
+
+          phase = 'readiness';
+          phaseStarted = Date.now();
+          recordMeasurementPhase('readiness', 'started', kind);
+          waitForReady(kind, name, { namespace, apiVersion, timeout: settings.readyTimeout, requireReady: true });
+          recordLifecyclePhase(kind, phase, phaseStarted, 'success', 'none', 'observed');
+        });
+        xpTimeToReady.add(Date.now() - operationStarted, { resource_kind: kind });
+      } catch (error) {
+        const failure = failureCategory(error);
+        recordLifecyclePhase(kind, phase, phaseStarted, failure.outcome, failure.reason, 'failed');
+        throw error;
+      }
+    }
+  } catch (error) {
+    errors.push(`create/readiness failed (${failureCategory(error).reason})`);
+  } finally {
+    for (const manifest of created.reverse()) {
+      const { kind, metadata, apiVersion } = manifest;
+      const name = metadata.name;
+      const namespace = metadata.namespace || DEFAULT_NAMESPACE;
+      let phase = 'delete_request';
+      let phaseStarted = Date.now();
+      recordMeasurementPhase('delete_request', 'requested', kind);
+      try {
+        deleteAndWait(kind, name, {
+          namespace, apiVersion, timeout: settings.deleteTimeout,
+          trendMetric: xpTimeToDelete, trendTags: { resource_kind: kind },
+          onDeleteAccepted: () => {
+            recordLifecyclePhase(kind, phase, phaseStarted, 'success', 'none', 'accepted');
+            phase = 'kubernetes_absence_wait';
+            phaseStarted = Date.now();
+            recordMeasurementPhase('kubernetes_absence_wait', 'started', kind);
+          },
+          onKubernetesObjectAbsent: () => {
+            recordLifecyclePhase(kind, phase, phaseStarted, 'success', 'none', 'observed');
+          },
+        });
+      } catch (error) {
+        const failure = failureCategory(error);
+        recordLifecyclePhase(kind, phase, phaseStarted, failure.outcome, failure.reason, 'failed');
+        xpResourcesFailed.add(1);
+        errors.push(`delete failed for owned ${kind} (${failure.reason})`);
+      }
+    }
+  }
+  if (errors.length) throw new Error(errors.join('; '));
 }
 
 /**
