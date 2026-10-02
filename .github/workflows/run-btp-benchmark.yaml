@@ -8,23 +8,47 @@ on:
         required: true
         type: boolean
         default: false
+  pull_request:
+    types: [opened, synchronize, reopened, ready_for_review]
 
 permissions:
   contents: read
 
-concurrency:
-  group: btp-benchmark-${{ github.ref }}
-  cancel-in-progress: true
-
 jobs:
+  pr-notice:
+    if: ${{ github.event_name == 'pull_request' && github.event.pull_request.head.repo.full_name != github.repository }}
+    runs-on: ubuntu-latest
+    steps:
+      - name: Explain credentialed benchmark policy
+        run: echo 'Fork PRs do not receive BTP credentials, so their benchmark is skipped. Automatic benchmarks run only for non-draft same-repository PRs targeting the default branch.'
+
   benchmark:
+    concurrency:
+      group: btp-benchmark-dedicated-account
+      cancel-in-progress: false
+    outputs:
+      metrics_archive_url: ${{ steps.archive.outputs.artifact-url }}
+      test_outcome: ${{ steps.test.outcome }}
+      test_exit_code: ${{ steps.test.outputs.exit-code }}
+      report_available: ${{ steps.report.outcome == 'success' && steps.report.outputs.report-markdown != '' }}
+    permissions:
+      contents: read
+    if: >-
+      ${{
+        (github.event_name == 'workflow_dispatch' &&
+         github.ref == format('refs/heads/{0}', github.event.repository.default_branch)) ||
+        (github.event_name == 'pull_request' &&
+         github.event.pull_request.head.repo.full_name == github.repository &&
+         !github.event.pull_request.draft &&
+         github.event.pull_request.base.ref == github.event.repository.default_branch)
+      }}
     runs-on: ubuntu-24.04
     timeout-minutes: 180
     environment:
       name: pr-e2e-no-approval
       deployment: false
     env:
-      VERSION: v0.0.0-${{ github.sha }}
+      VERSION: v0.0.0-${{ github.event_name == 'pull_request' && github.event.pull_request.head.sha || github.sha }}
       BUILD_REGISTRY: provider-btp-benchmark
       PLATFORMS: linux_amd64
     steps:
@@ -73,17 +97,17 @@ jobs:
       - name: Check out source
         uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
-          ref: ${{ github.sha }}
+          ref: ${{ github.event_name == 'pull_request' && github.event.pull_request.head.sha || github.sha }}
           submodules: true
           persist-credentials: false
 
-      - name: Assert source matches dispatch revision
+      - name: Assert source matches event revision
         env:
-          EXPECTED_SHA: ${{ github.sha }}
+          EXPECTED_SHA: ${{ github.event_name == 'pull_request' && github.event.pull_request.head.sha || github.sha }}
         run: |
           set -euo pipefail
           actual="$(git rev-parse HEAD)"
-          [[ "$actual" == "$EXPECTED_SHA" ]] || { echo '::error::checkout did not match dispatch SHA'; exit 1; }
+          [[ "$actual" == "$EXPECTED_SHA" ]] || { echo '::error::checkout did not match the pinned workflow revision'; exit 1; }
 
       - name: Compare BTP environment fingerprints (values withheld)
         env:
@@ -100,7 +124,7 @@ jobs:
         uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
           repository: gergely-szabo-sap/xp-diadromos
-          ref: 46824c4140810cadb5d16ad215f28d2de93e1d38
+          ref: 73918d847f254cef9bd123c11f777b76db9b0bea
           token: ${{ secrets.XP_DIADROMOS_RELEASE_TOKEN }}
           path: .github/actions/xp-diadromos
           persist-credentials: false
@@ -109,10 +133,10 @@ jobs:
         with:
           go-version-file: go.mod
 
-      - name: Build dispatched provider image
+      - name: Build provider image
         run: make build BUILD_REGISTRY="$BUILD_REGISTRY" PLATFORMS="$PLATFORMS" VERSION="$VERSION"
 
-      - name: Package dispatched provider for Crossplane
+      - name: Package provider for Crossplane
         run: make xpkg.build.provider-btp BUILD_REGISTRY="$BUILD_REGISTRY" PLATFORMS="$PLATFORMS" VERSION="$VERSION"
 
       - name: Validate exact single-image package
@@ -136,7 +160,7 @@ jobs:
         with:
           config: benchmarks/btp/config.yaml
           cleanup: auto
-          version: v0.7.1
+          version: v0.8.1
           provider-artifact: ${{ steps.package.outputs.path }}
           provider-image: provider:v0
           release-token: ${{ secrets.XP_DIADROMOS_RELEASE_TOKEN }}
@@ -156,7 +180,7 @@ jobs:
         uses: ./.github/actions/xp-diadromos/.github/actions/metrics-ci-report
         with:
           input: ${{ steps.test.outputs.archive }}
-          version: v0.7.1
+          version: v0.8.1
           release-token: ${{ secrets.XP_DIADROMOS_RELEASE_TOKEN }}
           presentation: benchmarks/btp/report-presentation.yaml
           artifact-name: btp-synthetic-benchmark-reports
@@ -167,8 +191,135 @@ jobs:
         if: ${{ !cancelled() && steps.report.outputs.report-json != '' }}
         run: ./benchmarks/btp/verify-report.sh "${{ steps.report.outputs.report-json }}"
 
+      - name: Upload metrics archive
+        id: archive
+        if: ${{ !cancelled() && steps.test.outputs.archive != '' }}
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
+        with:
+          name: btp-synthetic-benchmark-metrics-${{ github.run_id }}-${{ github.run_attempt }}
+          path: ${{ steps.test.outputs.archive }}
+          if-no-files-found: error
+          retention-days: 7
+          compression-level: 0
+
       - name: Fail if no archive was produced
         if: ${{ !cancelled() && steps.test.outputs.archive == '' }}
         run: |
           echo '::error::Benchmark did not produce a reportable archive.'
           exit 1
+
+  publish-archive-comment:
+    needs: benchmark
+    if: ${{ always() && !cancelled() && github.event_name == 'pull_request' && needs.benchmark.result != 'skipped' }}
+    runs-on: ubuntu-latest
+    permissions:
+      contents: none
+      pull-requests: write
+    steps:
+      - name: Download published benchmark report
+        if: ${{ needs.benchmark.outputs.report_available == 'true' }}
+        uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c # v8.0.1
+        with:
+          name: btp-synthetic-benchmark-reports
+          path: ${{ runner.temp }}/btp-synthetic-benchmark-reports
+
+      - name: Prepare safe measurement table
+        if: ${{ needs.benchmark.outputs.report_available == 'true' }}
+        env:
+          REPORT_PATH: ${{ runner.temp }}/btp-synthetic-benchmark-reports/benchmark-report.md
+          TABLE_PATH: ${{ runner.temp }}/btp-synthetic-benchmark-table.md
+        run: |
+          set -euo pipefail
+          python3 - <<'PY'
+          import os
+          import re
+          from pathlib import Path
+
+          report_path = Path(os.environ["REPORT_PATH"])
+          table_path = Path(os.environ["TABLE_PATH"])
+          if not report_path.is_file() or report_path.is_symlink():
+              raise SystemExit("published benchmark Markdown report is missing or unsafe")
+          if report_path.stat().st_size > 65536:
+              raise SystemExit("published benchmark Markdown report exceeds 64 KiB")
+
+          label_pattern = re.compile(r"[A-Za-z][A-Za-z0-9 ()-]{0,119}\Z")
+          value_pattern = re.compile(
+              r"(?:-?(?:\d{1,3}(?:,\d{3})+|\d+)(?:\.\d+)?(?:[eE][+-]?\d+)?(?:\s(?:ms|count|cores|bytes|millicores|MiB))?|n/a|unavailable|Unavailable — [A-Za-z0-9 ,.-]{1,200})\Z",
+              re.IGNORECASE,
+          )
+          lines = report_path.read_text(encoding="utf-8").splitlines()
+          start = next((i for i, line in enumerate(lines) if line.strip() == "| Measurement | Value |"), None)
+          if start is None or start + 1 >= len(lines) or not lines[start + 1].strip().startswith("| ---"):
+              raise SystemExit("benchmark report does not contain the expected measurement table")
+
+          rows = []
+          for line in lines[start + 2:]:
+              if not line.strip().startswith("|"):
+                  break
+              cells = [cell.strip() for cell in line.strip().strip("|").split("|")]
+              if len(cells) == 2:
+                  cells[0] = cells[0].replace(r"\(", "(").replace(r"\)", ")")
+              if len(cells) != 2 or not label_pattern.fullmatch(cells[0]) or not value_pattern.fullmatch(cells[1]):
+                  raise SystemExit("benchmark report contains an unexpected measurement row")
+              rows.append(f"| {cells[0]} | {cells[1]} |")
+          if not rows:
+              raise SystemExit("benchmark report measurement table is empty")
+
+          table_path.write_text(
+              "| Measurement | Value |\n| --- | ---: |\n" + "\n".join(rows) + "\n",
+              encoding="utf-8",
+          )
+          PY
+
+      - name: Publish benchmark archive link on pull request
+        env:
+          GH_TOKEN: ${{ github.token }}
+          PR_NUMBER: ${{ github.event.pull_request.number }}
+          PR_HEAD_SHA: ${{ github.event.pull_request.head.sha }}
+          ARTIFACT_URL: ${{ needs.benchmark.outputs.metrics_archive_url }}
+          TABLE_PATH: ${{ runner.temp }}/btp-synthetic-benchmark-table.md
+          REPORT_AVAILABLE: ${{ needs.benchmark.outputs.report_available }}
+          TEST_OUTCOME: ${{ needs.benchmark.outputs.test_outcome }}
+          TEST_EXIT_CODE: ${{ needs.benchmark.outputs.test_exit_code }}
+        run: |
+          set -euo pipefail
+          if [[ -n "$ARTIFACT_URL" ]]; then
+            archive_link="[Download the metrics archive]($ARTIFACT_URL) (available for 7 days; GitHub authentication and repository access are required)."
+          else
+            archive_link='_No downloadable metrics archive was published for this run._'
+          fi
+          if [[ "${REPORT_AVAILABLE:-false}" == "true" && -f "$TABLE_PATH" ]]; then
+            measurements="$(<"$TABLE_PATH")"
+          else
+            measurements='_Measurement table unavailable; see the report artifact linked in the Actions run._'
+          fi
+          body="$(cat <<EOF
+          <!-- btp-synthetic-benchmark-archive -->
+          ### BTP benchmark metrics archive
+
+          $archive_link
+
+          ### Measurements (report-only; status: not_evaluated)
+
+          $measurements
+
+          Readiness values summarize five client-observed samples per kind; Kubernetes object absence is not proof of remote BTP deletion. Provider utilization and observed reconciliation-error increases are descriptive, not performance or zero-error gates.
+
+          - Benchmark action outcome: \`${TEST_OUTCOME:-not started}\` (CLI exit code: \`${TEST_EXIT_CODE:-unavailable}\`).
+          - Run: [${GITHUB_RUN_ID} attempt ${GITHUB_RUN_ATTEMPT}](${GITHUB_SERVER_URL}/${GITHUB_REPOSITORY}/actions/runs/${GITHUB_RUN_ID})
+          - PR head revision tested: \`${PR_HEAD_SHA}\`.
+          EOF
+          )"
+          existing_comment_id="$(gh api --paginate \
+            "repos/$GITHUB_REPOSITORY/issues/$PR_NUMBER/comments?per_page=100" \
+            --jq '.[] | select(.user.login == "github-actions[bot]" and (.body | contains("<!-- btp-synthetic-benchmark-archive -->"))) | .id' \
+            | tail -n 1)"
+          if [[ -n "$existing_comment_id" ]]; then
+            gh api --method PATCH \
+              "repos/$GITHUB_REPOSITORY/issues/comments/$existing_comment_id" \
+              -f body="$body" >/dev/null
+          else
+            gh api --method POST \
+              "repos/$GITHUB_REPOSITORY/issues/$PR_NUMBER/comments" \
+              -f body="$body" >/dev/null
+          fi

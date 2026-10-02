@@ -1,4 +1,4 @@
-import { Counter, Gauge, Trend } from 'k6/metrics';
+import { Counter, Gauge, Rate, Trend } from 'k6/metrics';
 import k8s from 'k6/x/kubernetes';
 import { sleep } from 'k6';
 
@@ -7,14 +7,12 @@ import { sleep } from 'k6';
 // can observe failures. They stay in the helpers because the helpers own
 // the lifecycle operations.
 //
-// Standard lifecycle trend metrics (xp_time_to_ready, xp_time_to_update,
-// xp_time_to_delete) are defined in the test scripts that need them. Tests
-// should pass a resource_kind tag so one dashboard can compare measurements
-// for different Crossplane resource kinds.
-// See AGENTS.md "Dynamic Custom Metrics" for the convention.
+// Standard lifecycle Trends used by the BTP owned-resource scenario are
+// declared here so the lifecycle implementation and its metrics stay together.
 export const xpResourcesCreated = new Counter('xp_resources_created'); // count
 export const xpResourcesDeleted = new Counter('xp_resources_deleted'); // count
 export const xpResourcesFailed = new Counter('xp_resources_failed');  // count
+const xpLifecycleSuccess = new Rate('xp_lifecycle_success');
 
 // Structured measurement evidence. These metrics are intentionally emitted by
 // the helper so they remain available when only this single file is packaged
@@ -194,6 +192,159 @@ function groupKind(kind, apiVersion) {
   return `${kind}.${group}`;
 }
 
+const xpTimeToReady = new Trend('xp_time_to_ready', true);
+const xpTimeToDelete = new Trend('xp_time_to_delete', true);
+const xpLifecyclePhaseDuration = new Trend('xp_lifecycle_phase_duration', true);
+
+/** Return stable DNS-safe identities derived only from the run and instance. */
+export function buildResourceNames(runId, attempt, instance) {
+  const runIdentity = String(runId ?? '');
+  const attemptIdentity = String(attempt || '1');
+  if (!/^\d{1,20}$/.test(runIdentity)) {
+    throw new Error('XP_DIADROMOS_BTP_RUN_ID must be a 1-20 digit numeric identifier');
+  }
+  if (!/^\d{1,10}$/.test(attemptIdentity)) {
+    throw new Error('XP_DIADROMOS_BTP_RUN_ATTEMPT must be a 1-10 digit numeric identifier');
+  }
+  if (!Number.isInteger(instance) || instance < 1 || instance > 5) {
+    throw new Error('Resource instance must be an integer from 1 through 5');
+  }
+  const identity = `${runIdentity}-${attemptIdentity}-${instance}`;
+  const name = (prefix) => `${prefix}${identity}`;
+  return {
+    suffix: identity,
+    Subaccount: name('xp-btp-bench-'),
+    Directory: name('xp-btp-bench-dir-'),
+    Entitlement: name('xp-btp-bench-ent-'),
+    DirectoryEntitlement: name('xp-btp-bench-dirent-'),
+    SubaccountApiCredential: name('xp-btp-bench-api-'),
+    subdomain: name('xpbtpbench-'),
+    connectionSecret: name('xp-btp-bench-api-') + '-secret',
+  };
+}
+
+/** Apply shared ProviderConfig and scope defaults to a declared managed resource. */
+export function managedResource(kind, apiVersion, name, forProvider, options = {}) {
+  return {
+    apiVersion,
+    kind,
+    metadata: { name },
+    spec: {
+      providerConfigRef: { name: 'default' },
+      forProvider,
+      ...(options.connectionSecret ? {
+        writeConnectionSecretToRef: { name: options.connectionSecret, namespace: DEFAULT_NAMESPACE },
+      } : {}),
+    },
+  };
+}
+
+function failureCategory(error) {
+  if (isTimeoutError(error)) return { outcome: 'timeout', reason: 'timeout' };
+  if (error instanceof CrossplaneError || error?.name === 'CrossplaneError') {
+    return { outcome: 'failure', reason: 'reconcile_error' };
+  }
+  return { outcome: 'failure', reason: 'api_error' };
+}
+
+function positiveSeconds(value, name) {
+  const number = Number(value);
+  if (!Number.isFinite(number) || number <= 0) throw new Error(`${name} must be finite and greater than zero`);
+  return number;
+}
+
+function recordLifecyclePhase(kind, phase, startedAt, outcome, reason, event) {
+  xpLifecyclePhaseDuration.add(Math.max(0, Date.now() - startedAt), {
+    resource_kind: kind, stage: phase, outcome, reason,
+  });
+  recordMeasurementPhase(phase, event, kind);
+}
+
+/**
+ * Create and observe every declared resource, then always attempt reverse-order
+ * cleanup of accepted creates. `buildManifests` owns domain declarations;
+ * this function owns instrumentation, registration, error handling and cleanup.
+ */
+export function runOwnedResourceLifecycle({ buildManifests, settings }) {
+  let successful = false;
+  const created = [];
+  const errors = [];
+  let cleanupBudget = 0;
+  try {
+    const readyTimeout = positiveSeconds(settings.readyTimeout, 'readyTimeout');
+    const deleteTimeout = positiveSeconds(settings.deleteTimeout, 'deleteTimeout');
+    const createBudget = positiveSeconds(settings.createBudget, 'createBudget');
+    cleanupBudget = positiveSeconds(settings.cleanupBudget, 'cleanupBudget');
+    const createDeadline = Date.now() + createBudget * 1000;
+    const manifests = buildManifests(settings);
+    if (!Array.isArray(manifests) || manifests.length === 0) throw new Error('Resource declarations must be a non-empty array');
+    const client = k8sClient();
+    for (const manifest of manifests) {
+      const { kind, metadata, apiVersion } = manifest;
+      const name = metadata.name;
+      const namespace = metadata.namespace || DEFAULT_NAMESPACE;
+      const operationStarted = Date.now();
+      let phase = 'create_request';
+      let phaseStarted = Date.now();
+      try {
+        if (Date.now() >= createDeadline) throw new TimeoutError('Create/readiness budget exhausted');
+        measureOperation('create', kind, () => {
+          recordMeasurementPhase('create_request', 'requested', kind);
+          client.create(manifest);
+          created.push(manifest);
+          xpResourcesCreated.add(1);
+          recordLifecyclePhase(kind, phase, phaseStarted, 'success', 'none', 'accepted');
+          phase = 'readiness';
+          phaseStarted = Date.now();
+          recordMeasurementPhase('readiness', 'started', kind);
+          waitForReady(kind, name, { namespace, apiVersion, timeout: readyTimeout, deadline: createDeadline, requireReady: true });
+          recordLifecyclePhase(kind, phase, phaseStarted, 'success', 'none', 'observed');
+        });
+        xpTimeToReady.add(Date.now() - operationStarted, { resource_kind: kind });
+      } catch (error) {
+        const failure = failureCategory(error);
+        recordLifecyclePhase(kind, phase, phaseStarted, failure.outcome, failure.reason, 'failed');
+        throw error;
+      }
+    }
+    recordMeasurementPhase('all_resources_ready', 'observed');
+    successful = true;
+  } catch (error) {
+    errors.push(`create/readiness failed (${failureCategory(error).reason})`);
+  } finally {
+    const cleanupDeadline = Date.now() + cleanupBudget * 1000;
+    for (const manifest of created.reverse()) {
+      const { kind, metadata, apiVersion } = manifest;
+      const name = metadata.name;
+      const namespace = metadata.namespace || DEFAULT_NAMESPACE;
+      let phase = 'delete_request';
+      let phaseStarted = Date.now();
+      recordMeasurementPhase('delete_request', 'requested', kind);
+      try {
+        deleteAndWait(kind, name, {
+          namespace, apiVersion, timeout: positiveSeconds(settings.deleteTimeout, 'deleteTimeout'), deadline: cleanupDeadline,
+          trendMetric: xpTimeToDelete, trendTags: { resource_kind: kind },
+          onDeleteAccepted: () => {
+            recordLifecyclePhase(kind, phase, phaseStarted, 'success', 'none', 'accepted');
+            phase = 'kubernetes_absence_wait';
+            phaseStarted = Date.now();
+            recordMeasurementPhase('kubernetes_absence_wait', 'started', kind);
+          },
+          onKubernetesObjectAbsent: () => recordLifecyclePhase(kind, phase, phaseStarted, 'success', 'none', 'observed'),
+        });
+      } catch (error) {
+        successful = false;
+        const failure = failureCategory(error);
+        recordLifecyclePhase(kind, phase, phaseStarted, failure.outcome, failure.reason, 'failed');
+        xpResourcesFailed.add(1);
+        errors.push(`delete failed for owned ${kind} (${failure.reason})`);
+      }
+    }
+  }
+  xpLifecycleSuccess.add(successful && errors.length === 0 ? 1 : 0);
+  if (errors.length) throw new Error(errors.join('; '));
+}
+
 /**
  * Minimal JS object → YAML serializer for k6 manifests.
  * xk6-kubernetes apply() requires a YAML string (not a JS object).
@@ -335,7 +486,7 @@ export function deleteAndWait(kind, name, opts = {}) {
   return measureOperation('delete', kind, () => {
     const client = k8sClient();
     const ns = opts.namespace || DEFAULT_NAMESPACE;
-    const timeout = opts.timeout || POLL_TIMEOUT;
+    const timeout = opts.timeout === undefined ? POLL_TIMEOUT : positiveSeconds(opts.timeout, 'timeout');
     const interval = opts.interval || POLL_INTERVAL;
     const apiVersion = opts.apiVersion;
     if (!apiVersion) {
@@ -349,7 +500,7 @@ export function deleteAndWait(kind, name, opts = {}) {
 
     xpResourcesDeleted.add(1);
 
-    waitForDeletion(kind, name, { namespace: ns, timeout, interval, apiVersion });
+    waitForDeletion(kind, name, { namespace: ns, timeout, interval, deadline: opts.deadline, apiVersion });
     opts.onKubernetesObjectAbsent?.(Date.now() - start);
 
     const elapsed = Date.now() - start;
@@ -371,14 +522,15 @@ export function deleteAndWait(kind, name, opts = {}) {
 export function waitForReady(kind, name, opts = {}) {
   const client = k8sClient();
   const ns = opts.namespace || DEFAULT_NAMESPACE;
-  const timeout = opts.timeout || POLL_TIMEOUT;
+  const timeout = opts.timeout === undefined ? POLL_TIMEOUT : positiveSeconds(opts.timeout, 'timeout');
   const interval = opts.interval || POLL_INTERVAL;
   const apiVersion = opts.apiVersion;
   if (!apiVersion) {
     throw new Error('apiVersion is required: pass opts.apiVersion');
   }
 
-  const deadline = Date.now() + timeout * 1000;
+  const deadline = Math.min(Date.now() + timeout * 1000, opts.deadline === undefined ? Infinity : opts.deadline);
+  if (!Number.isFinite(deadline) || deadline <= Date.now()) throw new TimeoutError(`Timed out waiting for ${kind}/${name}`);
   let lastError = null;
 
   while (Date.now() < deadline) {
@@ -430,14 +582,15 @@ export function waitForReady(kind, name, opts = {}) {
 export function waitForDeletion(kind, name, opts = {}) {
   const client = k8sClient();
   const ns = opts.namespace || DEFAULT_NAMESPACE;
-  const timeout = opts.timeout || POLL_TIMEOUT;
+  const timeout = opts.timeout === undefined ? POLL_TIMEOUT : positiveSeconds(opts.timeout, 'timeout');
   const interval = opts.interval || POLL_INTERVAL;
   const apiVersion = opts.apiVersion;
   if (!apiVersion) {
     throw new Error('apiVersion is required: pass opts.apiVersion');
   }
 
-  const deadline = Date.now() + timeout * 1000;
+  const deadline = Math.min(Date.now() + timeout * 1000, opts.deadline === undefined ? Infinity : opts.deadline);
+  if (!Number.isFinite(deadline) || deadline <= Date.now()) throw new TimeoutError(`Timed out waiting for ${kind}/${name} deletion`);
 
   while (Date.now() < deadline) {
     try {
