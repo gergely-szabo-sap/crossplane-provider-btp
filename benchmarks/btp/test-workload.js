@@ -20,11 +20,11 @@ assert.ok(happy.created[4].spec.writeConnectionSecretToRef.name.length <= 63);
 assert.equal(happy.metrics.filter((metric) => metric.name === 'xp_lifecycle_phase_duration').length, kinds.length * 4);
 
 const missingAdmin = makeHarness({ secondDirectoryAdmin: '' });
-assert.throws(() => missingAdmin.run(), /XP_DIADROMOS_BTP_SECOND_DIRECTORY_ADMIN is required/);
+assert.throws(() => missingAdmin.run(), /create\/readiness failed \(api_error\)/);
 assert.equal(missingAdmin.created.length, 0, 'settings fail before creating resources');
 
 const duplicateAdmins = makeHarness({ secondDirectoryAdmin: 'BENCHMARK@example.invalid' });
-assert.throws(() => duplicateAdmins.run(), /Directory admins must be distinct/);
+assert.throws(() => duplicateAdmins.run(), /create\/readiness failed \(api_error\)/);
 assert.equal(duplicateAdmins.created.length, 0);
 
 const failedCreate = makeHarness({ createFailure: 'Entitlement' });

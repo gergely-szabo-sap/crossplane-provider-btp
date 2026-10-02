@@ -1,4 +1,4 @@
-import { Counter, Gauge, Trend } from 'k6/metrics';
+import { Counter, Gauge, Rate, Trend } from 'k6/metrics';
 import k8s from 'k6/x/kubernetes';
 import { sleep } from 'k6';
 
@@ -12,6 +12,7 @@ import { sleep } from 'k6';
 export const xpResourcesCreated = new Counter('xp_resources_created'); // count
 export const xpResourcesDeleted = new Counter('xp_resources_deleted'); // count
 export const xpResourcesFailed = new Counter('xp_resources_failed');  // count
+const xpLifecycleSuccess = new Rate('xp_lifecycle_success');
 
 // Structured measurement evidence. These metrics are intentionally emitted by
 // the helper so they remain available when only this single file is packaged
@@ -246,6 +247,12 @@ function failureCategory(error) {
   return { outcome: 'failure', reason: 'api_error' };
 }
 
+function positiveSeconds(value, name) {
+  const number = Number(value);
+  if (!Number.isFinite(number) || number <= 0) throw new Error(`${name} must be finite and greater than zero`);
+  return number;
+}
+
 function recordLifecyclePhase(kind, phase, startedAt, outcome, reason, event) {
   xpLifecyclePhaseDuration.add(Math.max(0, Date.now() - startedAt), {
     resource_kind: kind, stage: phase, outcome, reason,
@@ -259,12 +266,19 @@ function recordLifecyclePhase(kind, phase, startedAt, outcome, reason, event) {
  * this function owns instrumentation, registration, error handling and cleanup.
  */
 export function runOwnedResourceLifecycle({ buildManifests, settings }) {
-  const manifests = buildManifests(settings);
-  const client = k8sClient();
+  let successful = false;
   const created = [];
   const errors = [];
-
+  let cleanupBudget = 0;
   try {
+    const readyTimeout = positiveSeconds(settings.readyTimeout, 'readyTimeout');
+    const deleteTimeout = positiveSeconds(settings.deleteTimeout, 'deleteTimeout');
+    const createBudget = positiveSeconds(settings.createBudget, 'createBudget');
+    cleanupBudget = positiveSeconds(settings.cleanupBudget, 'cleanupBudget');
+    const createDeadline = Date.now() + createBudget * 1000;
+    const manifests = buildManifests(settings);
+    if (!Array.isArray(manifests) || manifests.length === 0) throw new Error('Resource declarations must be a non-empty array');
+    const client = k8sClient();
     for (const manifest of manifests) {
       const { kind, metadata, apiVersion } = manifest;
       const name = metadata.name;
@@ -273,17 +287,17 @@ export function runOwnedResourceLifecycle({ buildManifests, settings }) {
       let phase = 'create_request';
       let phaseStarted = Date.now();
       try {
+        if (Date.now() >= createDeadline) throw new TimeoutError('Create/readiness budget exhausted');
         measureOperation('create', kind, () => {
           recordMeasurementPhase('create_request', 'requested', kind);
           client.create(manifest);
           created.push(manifest);
           xpResourcesCreated.add(1);
           recordLifecyclePhase(kind, phase, phaseStarted, 'success', 'none', 'accepted');
-
           phase = 'readiness';
           phaseStarted = Date.now();
           recordMeasurementPhase('readiness', 'started', kind);
-          waitForReady(kind, name, { namespace, apiVersion, timeout: settings.readyTimeout, requireReady: true });
+          waitForReady(kind, name, { namespace, apiVersion, timeout: readyTimeout, deadline: createDeadline, requireReady: true });
           recordLifecyclePhase(kind, phase, phaseStarted, 'success', 'none', 'observed');
         });
         xpTimeToReady.add(Date.now() - operationStarted, { resource_kind: kind });
@@ -293,9 +307,12 @@ export function runOwnedResourceLifecycle({ buildManifests, settings }) {
         throw error;
       }
     }
+    recordMeasurementPhase('all_resources_ready', 'observed');
+    successful = true;
   } catch (error) {
     errors.push(`create/readiness failed (${failureCategory(error).reason})`);
   } finally {
+    const cleanupDeadline = Date.now() + cleanupBudget * 1000;
     for (const manifest of created.reverse()) {
       const { kind, metadata, apiVersion } = manifest;
       const name = metadata.name;
@@ -305,7 +322,7 @@ export function runOwnedResourceLifecycle({ buildManifests, settings }) {
       recordMeasurementPhase('delete_request', 'requested', kind);
       try {
         deleteAndWait(kind, name, {
-          namespace, apiVersion, timeout: settings.deleteTimeout,
+          namespace, apiVersion, timeout: positiveSeconds(settings.deleteTimeout, 'deleteTimeout'), deadline: cleanupDeadline,
           trendMetric: xpTimeToDelete, trendTags: { resource_kind: kind },
           onDeleteAccepted: () => {
             recordLifecyclePhase(kind, phase, phaseStarted, 'success', 'none', 'accepted');
@@ -313,11 +330,10 @@ export function runOwnedResourceLifecycle({ buildManifests, settings }) {
             phaseStarted = Date.now();
             recordMeasurementPhase('kubernetes_absence_wait', 'started', kind);
           },
-          onKubernetesObjectAbsent: () => {
-            recordLifecyclePhase(kind, phase, phaseStarted, 'success', 'none', 'observed');
-          },
+          onKubernetesObjectAbsent: () => recordLifecyclePhase(kind, phase, phaseStarted, 'success', 'none', 'observed'),
         });
       } catch (error) {
+        successful = false;
         const failure = failureCategory(error);
         recordLifecyclePhase(kind, phase, phaseStarted, failure.outcome, failure.reason, 'failed');
         xpResourcesFailed.add(1);
@@ -325,6 +341,7 @@ export function runOwnedResourceLifecycle({ buildManifests, settings }) {
       }
     }
   }
+  xpLifecycleSuccess.add(successful && errors.length === 0 ? 1 : 0);
   if (errors.length) throw new Error(errors.join('; '));
 }
 
@@ -469,7 +486,7 @@ export function deleteAndWait(kind, name, opts = {}) {
   return measureOperation('delete', kind, () => {
     const client = k8sClient();
     const ns = opts.namespace || DEFAULT_NAMESPACE;
-    const timeout = opts.timeout || POLL_TIMEOUT;
+    const timeout = opts.timeout === undefined ? POLL_TIMEOUT : positiveSeconds(opts.timeout, 'timeout');
     const interval = opts.interval || POLL_INTERVAL;
     const apiVersion = opts.apiVersion;
     if (!apiVersion) {
@@ -483,7 +500,7 @@ export function deleteAndWait(kind, name, opts = {}) {
 
     xpResourcesDeleted.add(1);
 
-    waitForDeletion(kind, name, { namespace: ns, timeout, interval, apiVersion });
+    waitForDeletion(kind, name, { namespace: ns, timeout, interval, deadline: opts.deadline, apiVersion });
     opts.onKubernetesObjectAbsent?.(Date.now() - start);
 
     const elapsed = Date.now() - start;
@@ -505,14 +522,15 @@ export function deleteAndWait(kind, name, opts = {}) {
 export function waitForReady(kind, name, opts = {}) {
   const client = k8sClient();
   const ns = opts.namespace || DEFAULT_NAMESPACE;
-  const timeout = opts.timeout || POLL_TIMEOUT;
+  const timeout = opts.timeout === undefined ? POLL_TIMEOUT : positiveSeconds(opts.timeout, 'timeout');
   const interval = opts.interval || POLL_INTERVAL;
   const apiVersion = opts.apiVersion;
   if (!apiVersion) {
     throw new Error('apiVersion is required: pass opts.apiVersion');
   }
 
-  const deadline = Date.now() + timeout * 1000;
+  const deadline = Math.min(Date.now() + timeout * 1000, opts.deadline === undefined ? Infinity : opts.deadline);
+  if (!Number.isFinite(deadline) || deadline <= Date.now()) throw new TimeoutError(`Timed out waiting for ${kind}/${name}`);
   let lastError = null;
 
   while (Date.now() < deadline) {
@@ -564,14 +582,15 @@ export function waitForReady(kind, name, opts = {}) {
 export function waitForDeletion(kind, name, opts = {}) {
   const client = k8sClient();
   const ns = opts.namespace || DEFAULT_NAMESPACE;
-  const timeout = opts.timeout || POLL_TIMEOUT;
+  const timeout = opts.timeout === undefined ? POLL_TIMEOUT : positiveSeconds(opts.timeout, 'timeout');
   const interval = opts.interval || POLL_INTERVAL;
   const apiVersion = opts.apiVersion;
   if (!apiVersion) {
     throw new Error('apiVersion is required: pass opts.apiVersion');
   }
 
-  const deadline = Date.now() + timeout * 1000;
+  const deadline = Math.min(Date.now() + timeout * 1000, opts.deadline === undefined ? Infinity : opts.deadline);
+  if (!Number.isFinite(deadline) || deadline <= Date.now()) throw new TimeoutError(`Timed out waiting for ${kind}/${name} deletion`);
 
   while (Date.now() < deadline) {
     try {
