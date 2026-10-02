@@ -10,7 +10,7 @@ spec:
             kind: Panel
             spec:
                 display:
-                    name: Iteration duration
+                    name: Last-observed lifecycle iteration duration
                 plugin:
                     kind: TimeSeriesChart
                     spec:
@@ -27,13 +27,13 @@ spec:
                         plugin:
                             kind: PrometheusTimeSeriesQuery
                             spec:
-                                query: rate(xp_diadromos_k6_iteration_duration_sum[1m]) / rate(xp_diadromos_k6_iteration_duration_count[1m])
+                                query: xp_diadromos_k6_iteration_duration_mean{scenario="create_delete"}
                                 seriesNameFormat: '{{archive_filename}}'
         "0_1":
             kind: Panel
             spec:
                 display:
-                    name: Iterations per second
+                    name: Completed lifecycle iterations
                 plugin:
                     kind: TimeSeriesChart
                     spec:
@@ -45,7 +45,7 @@ spec:
                         plugin:
                             kind: PrometheusTimeSeriesQuery
                             spec:
-                                query: rate(xp_diadromos_k6_iterations_total[1m])
+                                query: xp_diadromos_k6_iterations_total{scenario="create_delete"}
                                 seriesNameFormat: '{{archive_filename}}'
         "1_0":
             kind: Panel
@@ -92,7 +92,7 @@ spec:
             kind: Panel
             spec:
                 display:
-                    name: Time to ready
+                    name: Last-observed time to Ready (client-observed)
                 plugin:
                     kind: TimeSeriesChart
                     spec:
@@ -109,36 +109,13 @@ spec:
                         plugin:
                             kind: PrometheusTimeSeriesQuery
                             spec:
-                                query: sum by (resource_kind, archive_filename) (rate(xp_diadromos_k6_xp_time_to_ready_sum[1m])) / sum by (resource_kind, archive_filename) (rate(xp_diadromos_k6_xp_time_to_ready_count[1m]))
-                                seriesNameFormat: '{{resource_kind}} ({{archive_filename}})'
-        "2_1":
-            kind: Panel
-            spec:
-                display:
-                    name: Time to update
-                plugin:
-                    kind: TimeSeriesChart
-                    spec:
-                        legend:
-                            position: bottom
-                        yAxis:
-                            format:
-                                unit: milliseconds
-                            label: ""
-                            show: true
-                queries:
-                    - kind: TimeSeriesQuery
-                      spec:
-                        plugin:
-                            kind: PrometheusTimeSeriesQuery
-                            spec:
-                                query: sum by (resource_kind, archive_filename) (rate(xp_diadromos_k6_xp_time_to_update_sum[1m])) / sum by (resource_kind, archive_filename) (rate(xp_diadromos_k6_xp_time_to_update_count[1m]))
+                                query: xp_diadromos_k6_xp_time_to_ready_mean{scenario="create_delete"}
                                 seriesNameFormat: '{{resource_kind}} ({{archive_filename}})'
         "2_2":
             kind: Panel
             spec:
                 display:
-                    name: Time to delete
+                    name: Last-observed time until Kubernetes object absence (client-observed)
                 plugin:
                     kind: TimeSeriesChart
                     spec:
@@ -155,7 +132,7 @@ spec:
                         plugin:
                             kind: PrometheusTimeSeriesQuery
                             spec:
-                                query: sum by (resource_kind, archive_filename) (rate(xp_diadromos_k6_xp_time_to_delete_sum[1m])) / sum by (resource_kind, archive_filename) (rate(xp_diadromos_k6_xp_time_to_delete_count[1m]))
+                                query: xp_diadromos_k6_xp_time_to_delete_mean{scenario="create_delete"}
                                 seriesNameFormat: '{{resource_kind}} ({{archive_filename}})'
         "3_0":
             kind: Panel
@@ -241,19 +218,13 @@ spec:
             items:
                 - x: 0
                   "y": 0
-                  width: 8
+                  width: 12
                   height: 8
                   content:
                     $ref: '#/spec/panels/2_0'
-                - x: 8
+                - x: 12
                   "y": 0
-                  width: 8
-                  height: 8
-                  content:
-                    $ref: '#/spec/panels/2_1'
-                - x: 16
-                  "y": 0
-                  width: 8
+                  width: 12
                   height: 8
                   content:
                     $ref: '#/spec/panels/2_2'

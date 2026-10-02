@@ -30,6 +30,23 @@ The benchmark does not collect or print provider diagnostics, Kubernetes Events,
 
 The workload records per-instance lifecycle points grouped only by resource kind, plus phase markers and durations for Kubernetes create/readiness/delete operations and Kubernetes object absence. These are Kubernetes/client observations: an accepted Kubernetes delete or an absent Kubernetes object does **not** establish remote BTP deletion. The report verifier checks the lifecycle contract and fails on missing evidence. Benchmark execution and report publication are separate steps; an available archive can be reported after an execution failure without masking its status. The workflow uploads only the selected finalized metrics archive as a named seven-day artifact and only the report action's explicit JSON and Markdown files as a separate seven-day artifact. Never upload kubeconfigs, the provider package, diagnostics, credentials, or output directories. Review any downloaded report/archive before sharing; labels and context can identify private infrastructure, and archive diagnostics remain disabled.
 
+## Dashboard interpretation and private archive replay
+
+The overview dashboard uses projected k6 observation gauges for iteration duration, readiness, and the Kubernetes-object-absence endpoint. These values represent occupied projection buckets; Prometheus lookback can carry the last value forward between source samples. They are **last-observed bucket durations**, not a continuous event stream, and iteration count is a completed-count counter—not throughput. Do not derive a full-run mean from the dashboard `_mean` gauges. The PR report's raw-k6 aggregates are the supported full-run summaries. Existing archives keep their embedded dashboard; `metrics stats --dashboard benchmarks/btp/perses/overview.yaml` overrides dashboard-scoped interpretation for local replay without changing archive bytes.
+
+An explicit, offline-first replay utility is available for trusted CLI binaries and a caller-approved archive. It requires an already-existing private output directory, checks CLI versions, writes query/report results only there, serves the archive on loopback, and terminates the server on completion or failure. It does not install tools, discover credentials, start clusters, publish comments, or upload data. Never place an archive, report, or query output in the repository or a publication artifact. For example:
+
+```bash
+mkdir -m 700 /tmp/btp-metrics-replay
+python3 benchmarks/btp/validate-metrics-archive.py \\
+  --report-cli /path/to/xp-diadromos-v0.8.1 \\
+  --execution-cli /path/to/xp-diadromos-v0.8.0 \\
+  --archive /private/path/approved.tsdb.tar.zst \\
+  --output-dir /tmp/btp-metrics-replay
+```
+
+This check does not establish visual correctness. Inspect the dashboard with the supported pinned Perses renderer on a capable host, confirm the single iteration sample is visible, and note its lookback persistence and evaluation resolution. Existing archives need an explicitly supported Perses import to preview changed dashboard bytes; the stats override does not rewrite the archive's embedded dashboard. Pinned CLI replay and visual acceptance are separate gates. Neither requires a live BTP run.
+
 ## Local-versus-CI build comparison
 
 The CI job builds and packages the checked-out reviewed SHA for Linux AMD64, then gives that package to xp-diadromos as `provider:v0`. The local debug script instead requires a caller-supplied provider `.xpkg`, assigns `provider:v0`, and does not verify that the package was built from the current worktree or the same SHA as CI. The local and CI configs use the same Crossplane version, k6 image, resource workload, ProviderConfig fields, and credential environment-variable names, but identical credential values alone do not establish provider-build parity. Before any approved live comparison, record and compare the local artifact's source SHA/build provenance with the reviewed CI SHA and confirm both package paths use the same provider code. Do not print credentials or inspect raw diagnostic messages in ordinary CI logs.
