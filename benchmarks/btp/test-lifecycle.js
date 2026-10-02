@@ -71,9 +71,16 @@ assert.throws(() => invalidCleanupBudget.run(), /create\/readiness failed \(api_
 assert.equal(invalidCleanupBudget.created.length, 0);
 assert.deepEqual(invalidCleanupBudget.metrics.filter((metric) => metric.name === 'xp_lifecycle_success').map((metric) => metric.value), [0]);
 
-const names = Array.from({ length: 5 }, (_, index) => happy.helper.buildResourceNames('A run identity that is much longer than a DNS label and contains spaces', 'attempt/with/a/long/value', index + 1, 1_700_000_000_000));
-const repeatedNames = Array.from({ length: 5 }, (_, index) => happy.helper.buildResourceNames('A run identity that is much longer than a DNS label and contains spaces', 'attempt/with/a/long/value', index + 1, 1_700_000_000_000));
-assert.equal(JSON.stringify(names), JSON.stringify(repeatedNames), 'frozen clocks and identical inputs produce deterministic identities');
+const runId = '12345678901234567890';
+const attempt = '1234567890';
+const names = Array.from({ length: 5 }, (_, index) => happy.helper.buildResourceNames(runId, attempt, index + 1));
+const repeatedNames = Array.from({ length: 5 }, (_, index) => happy.helper.buildResourceNames(runId, attempt, index + 1));
+assert.equal(JSON.stringify(names), JSON.stringify(repeatedNames), 'identical run identity inputs reproduce exact names');
+assert.notEqual(happy.helper.buildResourceNames(runId, '2', 1).Subaccount, names[0].Subaccount, 'attempt changes ownership names');
+assert.notEqual(happy.helper.buildResourceNames('12345678901234567891', attempt, 1).Subaccount, names[0].Subaccount, 'run ID changes ownership names');
+assert.throws(() => happy.helper.buildResourceNames('123456789012345678901', attempt, 1), /1-20 digit numeric identifier/);
+assert.throws(() => happy.helper.buildResourceNames(runId, '10000000000', 1), /1-10 digit numeric identifier/);
+assert.throws(() => happy.helper.buildResourceNames('run id', attempt, 1), /1-20 digit numeric identifier/);
 for (const field of ['Subaccount', 'Directory', 'Entitlement', 'DirectoryEntitlement', 'SubaccountApiCredential', 'subdomain', 'connectionSecret']) {
   const values = names.map((entry) => entry[field]);
   assert.equal(new Set(values).size, 5, `${field} preserves distinct instance indices`);
