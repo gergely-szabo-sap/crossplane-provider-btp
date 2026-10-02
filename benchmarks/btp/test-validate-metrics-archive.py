@@ -34,6 +34,10 @@ if args[:2] == ["metrics", "serve"]:
                 body = b"not-json"
             elif self.path.startswith("/-/ready"):
                 body = b"Prometheus is Ready\\n"
+            elif os.environ.get("STUB_NAN"):
+                body = json.dumps({"status":"success","data":{"resultType":"matrix","result":[{"metric":{"archive_filename":"fixture"},"values":[[1,"NaN"],[2,"4.25"]]}]}}).encode()
+            elif os.environ.get("STUB_INFINITY"):
+                body = json.dumps({"status":"success","data":{"resultType":"matrix","result":[{"metric":{"archive_filename":"fixture"},"values":[[1,"Infinity"],[2,"4.25"]]}]}}).encode()
             else:
                 body = json.dumps({"status":"success","data":{"resultType":"vector","result":[{"metric":{"archive_filename":"fixture"},"value":[1,"4.25"]}]}}).encode()
             self.send_response(200); self.end_headers(); self.wfile.write(body)
@@ -63,7 +67,7 @@ raise SystemExit(2)
 '''
 
 
-def invoke(*, version="0.8.1", fail=False, malformed=False, unavailable=False, checks="array", expected=0):
+def invoke(*, version="0.8.1", execution_cli=False, fail=False, malformed=False, unavailable=False, nan=False, infinity=False, checks="array", expected=0):
     with tempfile.TemporaryDirectory(prefix="btp-replay-test-") as directory:
         root = Path(directory)
         cli = root / "xp-diadromos"
@@ -111,10 +115,14 @@ def invoke(*, version="0.8.1", fail=False, malformed=False, unavailable=False, c
         if fail: env["STUB_FAIL"] = "command"
         if malformed: env["STUB_MALFORMED"] = "1"
         if unavailable: env["STUB_UNAVAILABLE"] = "1"
+        if nan: env["STUB_NAN"] = "1"
+        if infinity: env["STUB_INFINITY"] = "1"
         env["STUB_CHECKS"] = checks
         command = [sys.executable, str(VALIDATOR), "--report-cli", str(cli),
                    "--archive", str(archive), "--presentation", str(presentation),
                    "--dashboard", str(dashboard), "--output-dir", str(out)]
+        if execution_cli:
+            command.extend(["--execution-cli", str(cli)])
         result = subprocess.run(command, env=env, text=True, stdout=subprocess.PIPE, stderr=subprocess.PIPE, timeout=15)
         if (result.returncode == 0) != (expected == 0):
             raise AssertionError(f"unexpected result {result.returncode}: {result.stderr}")
@@ -132,9 +140,12 @@ def invoke(*, version="0.8.1", fail=False, malformed=False, unavailable=False, c
 
 def main():
     invoke()
+    invoke(execution_cli=True)
     invoke(version="0.0.0-dev", expected=1)
     invoke(fail=True, expected=1)
     invoke(malformed=True, expected=1)
+    invoke(nan=True)
+    invoke(infinity=True, expected=1)
     invoke(unavailable=True, expected=1)
     invoke(checks="null")
     invoke(checks="nonempty", expected=1)
