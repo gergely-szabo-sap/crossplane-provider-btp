@@ -14,11 +14,11 @@ if ! contract_data="$(jq -r '
     [metrics[] | select(.metric == $metric and .tags.resource_kind == $kind)];
   def metric_status($samples; $metric_type; $check_censored):
     if ($samples | length) == 0 then "missing"
-    elif ($samples | length) != 1 then "duplicate"
+    elif ($samples | length) != 1 then "duplicate_groups"
     elif $samples[0].source != "raw_k6" then "source_mismatch"
     elif $samples[0].metric_type != $metric_type then "metric_type_mismatch"
-    elif $samples[0].sample_count != 1 or
-         $samples[0].finite_sample_count != 1 or
+    elif $samples[0].sample_count != 5 or
+         $samples[0].finite_sample_count != 5 or
          (($samples[0].non_finite_sample_count // 0) != 0) then "sample_count_invalid"
     elif $check_censored and $samples[0].censored == true then "censored"
     elif (($samples[0].percentiles.p50 | type) != "number") then "finite_value_missing"
@@ -29,8 +29,12 @@ if ! contract_data="$(jq -r '
   def operation_status($kind; $operation):
     [metrics[] | select(.metric == "xp_operation_duration" and
       .tags.resource_kind == $kind and .tags.operation == $operation and
-      .tags.outcome == "success")]
-    | metric_status(.; "trend"; false);
+      .tags.outcome == "success")] as $successes
+    | [metrics[] | select(.metric == "xp_operation_duration" and
+      .tags.resource_kind == $kind and .tags.operation == $operation and
+      (.tags.outcome == "failure" or .tags.outcome == "timeout"))] as $failures
+    | if ($failures | length) > 0 then "failed_operation"
+      else metric_status($successes; "trend"; false) end;
   [
     (if .schema_version == "v1" then empty else "schema_version" end),
     (if .status == "not_evaluated" then empty else "status" end),
@@ -76,7 +80,15 @@ if ! contract_data="$(jq -r '
          elif (.sample_count | type) == "number" and .sample_count >= 0 then (.sample_count | tostring)
          else "0" end)]
      | @tsv] as $marker_rows
-  | (["BASE\t\($base_errors | if length == 0 then "ok" else join(",") end)"] + $rows + $phase_rows + $marker_rows)[]
+  | [metrics[]
+     | select(.source == "raw_k6" and .metric == "xp_lifecycle_phase_duration" and .metric_type == "trend")
+     | (.tags.resource_kind // "") as $kind
+     | (.tags.outcome // "") as $outcome
+     | select(((["Subaccount", "Directory", "Entitlement", "DirectoryEntitlement", "SubaccountApiCredential"] | index($kind)) != null))
+     | select((["failure", "timeout"] | index($outcome)) != null)
+     | ["FAILURE", $kind, "lifecycle_phase", $outcome]
+     | @tsv] as $failure_rows
+  | (["BASE\t\($base_errors | if length == 0 then "ok" else join(",") end)"] + $rows + $phase_rows + $marker_rows + $failure_rows)[]
 ' "$report" 2>/dev/null)"; then
   echo '::error title=Benchmark report contract::Report JSON could not be validated.'
   echo 'Benchmark report JSON could not be validated.' >&2
@@ -89,6 +101,11 @@ failures=0
 phase_heading_added=false
 marker_heading_added=false
 while IFS=$'\t' read -r row_type field1 field2 field3 field4 field5 field6 field7; do
+  if [[ "$row_type" == FAILURE ]]; then
+    ((failures += 1))
+    printf '::error title=Failed BTP lifecycle operation::%s has recorded %s outcome evidence.\n' "$field1" "$field3"
+    continue
+  fi
   if [[ "$row_type" == PHASE ]]; then
     if [[ "$phase_heading_added" == false ]]; then
       summary+=$'\n### Workload phase durations (client-observed)\n\n| Resource kind | Phase | Outcome | Category | Samples | p50 (ms) |\n| --- | --- | --- | --- | ---: | ---: |\n'
@@ -132,13 +149,13 @@ done <<<"$contract_data"
 
 
 if (( failures == 0 )); then
-  summary+=$'\nAll five resource lifecycles have the required report evidence.\n'
+  summary+=$'\nAll five resource kinds have exactly five instances of the required report evidence.\n'
   printf '%s' "$summary"
   printf '%s\n' 'Benchmark report contract verified.'
 else
   summary+=$'\n**Result:** failed; see the step annotations for missing or invalid evidence.\n'
   printf '%s' "$summary"
-  echo 'Benchmark report failed the five-resource lifecycle contract; see per-resource evidence above.' >&2
+  echo 'Benchmark report failed the five-kind, five-instance lifecycle contract; see per-resource evidence above.' >&2
 fi
 
 if [[ -n "${GITHUB_STEP_SUMMARY:-}" ]]; then

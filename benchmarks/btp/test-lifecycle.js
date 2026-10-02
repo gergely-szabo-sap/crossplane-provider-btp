@@ -9,31 +9,35 @@ assert.equal(happy.options.scenarios.create_delete.iterations, 1);
 assert.equal(happy.options.scenarios.create_delete.maxDuration, '110m');
 assert.equal(Array.from(happy.options.thresholds.xp_lifecycle_success).join(','), 'rate==1');
 happy.run();
-assert.deepEqual(happy.created.map((resource) => resource.kind), kinds);
-assert.deepEqual(happy.deleted.map((resource) => resource.kind), [...kinds].reverse());
-assert.equal(happy.metrics.filter((metric) => metric.name === 'xp_time_to_ready').length, kinds.length);
-assert.equal(happy.metrics.filter((metric) => metric.name === 'xp_time_to_delete').length, kinds.length);
-assert.equal(happy.metrics.filter((metric) => metric.name === 'xp_operation_duration' && metric.tags.operation === 'create').length, kinds.length);
-assert.equal(happy.metrics.filter((metric) => metric.name === 'xp_operation_duration' && metric.tags.operation === 'delete').length, kinds.length);
-assert.equal(happy.metrics.filter((metric) => metric.name === 'xp_lifecycle_phase_duration').length, kinds.length * 4);
+assert.deepEqual(happy.created.map((resource) => resource.kind), kinds.flatMap((kind) => Array(5).fill(kind)));
+assert.deepEqual(happy.deleted.map((resource) => resource.kind), [...kinds].reverse().flatMap((kind) => Array(5).fill(kind)));
+assert.equal(happy.metrics.filter((metric) => metric.name === 'xp_time_to_ready').length, 25);
+assert.equal(happy.metrics.filter((metric) => metric.name === 'xp_time_to_delete').length, 25);
+assert.equal(happy.metrics.filter((metric) => metric.name === 'xp_operation_duration' && metric.tags.operation === 'create').length, 25);
+assert.equal(happy.metrics.filter((metric) => metric.name === 'xp_operation_duration' && metric.tags.operation === 'delete').length, 25);
+assert.equal(happy.metrics.filter((metric) => metric.name === 'xp_lifecycle_phase_duration').length, 25 * 4);
 assert.deepEqual(happy.metrics.filter((metric) => metric.name === 'xp_lifecycle_success').map((metric) => metric.value), [1]);
 assert.ok(happy.metrics.some((metric) => metric.name === 'xp_measurement_phase' && metric.tags.stage === 'all_resources_ready'));
 assert.ok(happy.created.every((resource) => resource.metadata.namespace === undefined), 'managed CRs are cluster-scoped');
-assert.equal(happy.created[4].spec.forProvider.readOnly, true);
-assert.deepEqual(Array.from(happy.created[1].spec.forProvider.directoryAdmins), ['benchmark@example.invalid', 'directory-admin-two']);
-assert.equal(happy.created[4].spec.writeConnectionSecretToRef.name, `${happy.created[4].metadata.name.slice(0, 55)}-secret`);
-assert.equal(happy.created[4].spec.writeConnectionSecretToRef.namespace, 'default');
+const credential = happy.created.at(-1);
+assert.equal(credential.spec.forProvider.readOnly, true);
+assert.deepEqual(Array.from(happy.created[5].spec.forProvider.directoryAdmins), ['benchmark@example.invalid', 'directory-admin-two']);
+assert.ok(credential.spec.writeConnectionSecretToRef.name.endsWith('-secret'));
+assert.equal(credential.spec.writeConnectionSecretToRef.namespace, 'default');
+const readyIndex = happy.events.findIndex((event) => event.type === 'all_ready');
+const deleteIndex = happy.events.findIndex((event) => event.type === 'delete');
+assert.ok(readyIndex >= 0 && readyIndex < deleteIndex);
+assert.equal(happy.events.filter((event) => event.type === 'ready').length, 25);
 assert.ok(happy.metrics.some((metric) => metric.name === 'xp_measurement_phase' && metric.tags.stage === 'readiness' && metric.tags.field === 'observed'));
 
 const createRejected = makeHarness({ createFailure: 'Entitlement' });
 assert.throws(() => createRejected.run(), /create\/readiness failed \(api_error\)/);
-assert.deepEqual(createRejected.deleted.map((resource) => resource.kind), ['Directory', 'Subaccount'], 'only accepted creates are registered');
-assert.equal(createRejected.deleted.length, 2);
+assert.equal(createRejected.deleted.length, 10, 'only the ten accepted parent creates are registered');
 assert.deepEqual(createRejected.metrics.filter((metric) => metric.name === 'xp_lifecycle_success').map((metric) => metric.value), [0]);
 
 const readyFailed = makeHarness({ readyFailure: 'Entitlement' });
 assert.throws(() => readyFailed.run(), /create\/readiness failed \(timeout\)/);
-assert.deepEqual(readyFailed.deleted.map((resource) => resource.kind), ['Entitlement', 'Directory', 'Subaccount']);
+assert.equal(readyFailed.deleted.length, 11, 'cleanup includes the readiness-failed accepted object');
 assert.ok(readyFailed.metrics.some((metric) => metric.name === 'xp_lifecycle_phase_duration' && metric.tags.stage === 'readiness' && metric.tags.outcome === 'timeout'));
 
 const createBudgetFailed = makeHarness({ readyFailure: 'Subaccount', env: { XP_DIADROMOS_BTP_CREATE_BUDGET: '2' } });
@@ -43,14 +47,14 @@ assert.deepEqual(createBudgetFailed.metrics.filter((metric) => metric.name === '
 
 const cleanupBudgetExpired = makeHarness({ holdDeleted: true, env: { XP_DIADROMOS_BTP_CLEANUP_BUDGET: '2' } });
 assert.throws(() => cleanupBudgetExpired.run(), /delete failed for owned/);
-assert.equal(cleanupBudgetExpired.deleted.length, kinds.length, 'cleanup issues every delete despite an expired phase deadline');
+assert.equal(cleanupBudgetExpired.deleted.length, 25, 'cleanup issues every delete despite an expired phase deadline');
 assert.equal(cleanupBudgetExpired.metrics.filter((metric) => metric.name === 'xp_time_to_delete').length, 0, 'unobserved absence has no successful deletion trend');
 assert.deepEqual(cleanupBudgetExpired.metrics.filter((metric) => metric.name === 'xp_lifecycle_success').map((metric) => metric.value), [0]);
 
-const deletionFailed = makeHarness({ deleteFailure: 'DirectoryEntitlement' });
+const deletionFailed = makeHarness({ deleteFailure: ['DirectoryEntitlement', 'Directory'] });
 assert.throws(() => deletionFailed.run(), /delete failed for owned DirectoryEntitlement \(api_error\)/);
-assert.deepEqual(deletionFailed.deleted.map((resource) => resource.kind), [...kinds].reverse(), 'cleanup continues after delete errors');
-assert.ok(deletionFailed.metrics.some((metric) => metric.name === 'xp_operation_duration' && metric.tags.operation === 'delete' && metric.tags.outcome === 'failure'));
+assert.deepEqual(deletionFailed.deleted.map((resource) => resource.kind), [...kinds].reverse().flatMap((kind) => Array(5).fill(kind)), 'cleanup continues after multiple delete errors');
+assert.equal(deletionFailed.metrics.filter((metric) => metric.name === 'xp_operation_duration' && metric.tags.operation === 'delete' && metric.tags.outcome === 'failure').length, 10);
 assert.ok(!deletionFailed.logs.some((line) => line.includes('synthetic delete failure')), 'raw errors are not logged');
 
 const invalidAdmins = makeHarness({ secondDirectoryAdmin: 'BENCHMARK@example.invalid' });
@@ -67,12 +71,14 @@ assert.throws(() => invalidCleanupBudget.run(), /create\/readiness failed \(api_
 assert.equal(invalidCleanupBudget.created.length, 0);
 assert.deepEqual(invalidCleanupBudget.metrics.filter((metric) => metric.name === 'xp_lifecycle_success').map((metric) => metric.value), [0]);
 
-const names = happy.helper.buildResourceNames('A run identity that is much longer than a DNS label and contains spaces', 'attempt/with/a/long/value', 1_700_000_000_000);
-const repeatedNames = happy.helper.buildResourceNames('A run identity that is much longer than a DNS label and contains spaces', 'attempt/with/a/long/value', 1_700_000_000_000);
-const resourceNames = [names.Subaccount, names.Directory, names.Entitlement, names.DirectoryEntitlement, names.SubaccountApiCredential];
+const names = Array.from({ length: 5 }, (_, index) => happy.helper.buildResourceNames('A run identity that is much longer than a DNS label and contains spaces', 'attempt/with/a/long/value', index + 1, 1_700_000_000_000));
+const repeatedNames = Array.from({ length: 5 }, (_, index) => happy.helper.buildResourceNames('A run identity that is much longer than a DNS label and contains spaces', 'attempt/with/a/long/value', index + 1, 1_700_000_000_000));
 assert.equal(JSON.stringify(names), JSON.stringify(repeatedNames), 'frozen clocks and identical inputs produce deterministic identities');
-assert.equal(new Set(resourceNames).size, kinds.length);
-assert.ok([...resourceNames, names.subdomain, names.connectionSecret].every((name) => name.length <= 63 && /^[a-z0-9]([a-z0-9-]*[a-z0-9])?$/.test(name)));
+for (const field of ['Subaccount', 'Directory', 'Entitlement', 'DirectoryEntitlement', 'SubaccountApiCredential', 'subdomain', 'connectionSecret']) {
+  const values = names.map((entry) => entry[field]);
+  assert.equal(new Set(values).size, 5, `${field} preserves distinct instance indices`);
+  assert.ok(values.every((name) => name.length <= 63 && /^[a-z0-9]([a-z0-9-]*[a-z0-9])?$/.test(name)));
+}
 
 const { helperOriginal, scenarioOriginal, scenarioSource } = loadSources();
 const helperImports = [...helperOriginal.matchAll(/^import .* from ['"]([^'"]+)['"];?$/gm)].map((match) => match[1]);

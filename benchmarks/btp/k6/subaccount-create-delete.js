@@ -29,6 +29,9 @@ const SETTINGS = {
 const ACCOUNT_API = 'account.btp.sap.crossplane.io/v1alpha1';
 const SECURITY_API = 'security.btp.sap.crossplane.io/v1alpha1';
 
+// Five independent parent/child sets are retained until every resource is Ready.
+const INSTANCES_PER_KIND = 5;
+
 function buildResourceSet(settings) {
   const {
     subaccountAdmin,
@@ -43,37 +46,47 @@ function buildResourceSet(settings) {
     throw new Error('Directory admins must be distinct');
   }
 
-  const names = xp.buildResourceNames(runId, attempt);
-  const subaccount = xp.managedResource('Subaccount', ACCOUNT_API, names.Subaccount, {
-    displayName: names.Subaccount,
-    region,
-    subdomain: names.subdomain,
-    subaccountAdmins: [subaccountAdmin],
+  const sets = Array.from({ length: INSTANCES_PER_KIND }, (_, index) => {
+    const names = xp.buildResourceNames(runId, attempt, index + 1);
+    return {
+      subaccount: xp.managedResource('Subaccount', ACCOUNT_API, names.Subaccount, {
+        displayName: names.Subaccount,
+        region,
+        subdomain: names.subdomain,
+        subaccountAdmins: [subaccountAdmin],
+      }),
+      directory: xp.managedResource('Directory', ACCOUNT_API, names.Directory, {
+        description: `xp-diadromos benchmark ${names.suffix}`,
+        directoryAdmins: [subaccountAdmin, secondDirectoryAdmin],
+        directoryFeatures: ['DEFAULT', 'ENTITLEMENTS'],
+        displayName: names.Directory,
+      }),
+      entitlement: xp.managedResource('Entitlement', ACCOUNT_API, names.Entitlement, {
+        serviceName: 'cis',
+        servicePlanName: 'local',
+        enable: true,
+        subaccountRef: { name: names.Subaccount },
+      }),
+      directoryEntitlement: xp.managedResource('DirectoryEntitlement', ACCOUNT_API, names.DirectoryEntitlement, {
+        directoryRef: { name: names.Directory },
+        serviceName: 'cis',
+        planName: 'local',
+      }),
+      apiCredential: xp.managedResource('SubaccountApiCredential', SECURITY_API, names.SubaccountApiCredential, {
+        readOnly: true,
+        subaccountRef: { name: names.Subaccount },
+      }, { connectionSecret: names.connectionSecret }),
+    };
   });
-  const directory = xp.managedResource('Directory', ACCOUNT_API, names.Directory, {
-    description: `xp-diadromos benchmark ${names.suffix}`,
-    directoryAdmins: [subaccountAdmin, secondDirectoryAdmin],
-    directoryFeatures: ['DEFAULT', 'ENTITLEMENTS'],
-    displayName: names.Directory,
-  });
-  const entitlement = xp.managedResource('Entitlement', ACCOUNT_API, names.Entitlement, {
-    serviceName: 'cis',
-    servicePlanName: 'local',
-    enable: true,
-    subaccountRef: { name: names.Subaccount },
-  });
-  const directoryEntitlement = xp.managedResource('DirectoryEntitlement', ACCOUNT_API, names.DirectoryEntitlement, {
-    directoryRef: { name: names.Directory },
-    serviceName: 'cis',
-    planName: 'local',
-  });
-  const apiCredential = xp.managedResource('SubaccountApiCredential', SECURITY_API, names.SubaccountApiCredential, {
-    readOnly: true,
-    subaccountRef: { name: names.Subaccount },
-  }, { connectionSecret: names.connectionSecret });
 
-  // Parent resources are Ready before their dependent allocations/credential.
-  return [subaccount, directory, entitlement, directoryEntitlement, apiCredential];
+  // Kind-major order makes every parent Ready before any dependent child request.
+  return [
+    ...sets.map((set) => set.subaccount),
+    ...sets.map((set) => set.directory),
+    ...sets.map((set) => set.entitlement),
+    ...sets.map((set) => set.directoryEntitlement),
+    ...sets.map((set) => set.apiCredential),
+  ];
 }
 
 export default function () {

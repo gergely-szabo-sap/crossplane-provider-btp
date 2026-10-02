@@ -1,4 +1,4 @@
-# Report-only BTP benchmark. Creates one serial lifecycle set in the dedicated test account.
+# Report-only BTP benchmark. Creates five serial, coexisting sets (25 managed resources).
 environments:
   local:
     type: kind
