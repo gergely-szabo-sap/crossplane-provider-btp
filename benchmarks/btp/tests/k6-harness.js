@@ -36,17 +36,24 @@ function makeHarness({
   const metrics = [];
   const created = [];
   const deleted = [];
+  const events = [];
   const objects = new Map();
   const logs = [];
-  const add = (name, value, tags) => metrics.push({ name, value, tags: tags || {} });
+  const add = (name, value, tags) => {
+    metrics.push({ name, value, tags: tags || {} });
+    if (name === 'xp_measurement_phase' && tags?.stage === 'all_resources_ready') events.push({ type: 'all_ready' });
+  };
   class Metric {
     constructor(name) { this.name = name; }
     add(value, tags) { add(this.name, value, tags); }
   }
   const client = {
     create(manifest) {
-      if (createFailure === manifest.kind) throw new Error('synthetic API failure');
+      if (createFailure === manifest.kind ||
+          (createFailure && typeof createFailure === 'object' && createFailure.kind === manifest.kind &&
+           manifest.metadata.name.endsWith(`-${createFailure.instance}`))) throw new Error('synthetic API failure');
       created.push(manifest);
+      events.push({ type: 'create', kind: manifest.kind, name: manifest.metadata.name });
       objects.set(`${manifest.kind}/${manifest.metadata.name}`, manifest);
     },
     get(groupKind, name) {
@@ -54,12 +61,14 @@ function makeHarness({
       if (readyFailure === kind) throw new Error('synthetic transient GET failure');
       const object = objects.get(`${kind}/${name}`);
       if (!object) throw new Error('404 Not Found');
+      events.push({ type: 'ready', kind, name });
       return { status: { conditions: [{ type: 'Ready', status: 'True' }] } };
     },
     delete(groupKind, name) {
       const kind = groupKind.split('.')[0];
       deleted.push({ kind, name });
-      if (deleteFailure === kind) throw new Error('synthetic delete failure');
+      events.push({ type: 'delete', kind, name });
+      if (deleteFailure === kind || (Array.isArray(deleteFailure) && deleteFailure.includes(kind))) throw new Error('synthetic delete failure');
       if (!holdDeleted) objects.delete(`${kind}/${name}`);
     },
   };
@@ -100,6 +109,7 @@ function makeHarness({
     client,
     created,
     deleted,
+    events,
     objects,
     metrics,
     logs,
