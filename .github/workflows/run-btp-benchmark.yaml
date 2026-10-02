@@ -160,7 +160,7 @@ jobs:
         with:
           config: benchmarks/btp/config.yaml
           cleanup: auto
-          version: v0.8.0
+          version: v0.8.1
           provider-artifact: ${{ steps.package.outputs.path }}
           provider-image: provider:v0
           release-token: ${{ secrets.XP_DIADROMOS_RELEASE_TOKEN }}
