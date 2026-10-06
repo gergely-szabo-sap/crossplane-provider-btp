@@ -31,8 +31,15 @@ jobs:
       test_outcome: ${{ steps.test.outcome }}
       test_exit_code: ${{ steps.test.outputs.exit-code }}
       report_available: ${{ steps.report.outcome == 'success' && steps.report.outputs.report-markdown != '' }}
-      report_mode: current-only
+      report_mode: ${{ steps.baseline-validation.outcome == 'success' && steps.baseline-validation.outputs.baseline_mode || 'current-only' }}
+      baseline_reason: ${{ (steps.baseline-validation.outcome == 'failure' || steps.baseline-resolution.outcome == 'failure' || steps.baseline-cli.outcome == 'failure') && 'download_unavailable' || steps.baseline-validation.outputs.baseline_reason || steps.baseline-resolution.outputs.baseline_reason }}
+      baseline_provenance: ${{ steps.baseline-validation.outputs.baseline_provenance || steps.baseline-resolution.outputs.baseline_provenance }}
+      baseline_run_id: ${{ steps.baseline-resolution.outputs.baseline_run_id }}
+      baseline_attempt: ${{ steps.baseline-resolution.outputs.baseline_attempt }}
+      baseline_artifact_id: ${{ steps.baseline-resolution.outputs.baseline_artifact_id }}
+      baseline_head_sha: ${{ steps.baseline-resolution.outputs.baseline_head_sha }}
     permissions:
+      actions: read
       contents: read
     if: >-
       ${{
@@ -175,12 +182,45 @@ jobs:
           GITHUB_RUN_ID: ${{ github.run_id }}
           GITHUB_RUN_ATTEMPT: ${{ github.run_attempt }}
 
+      - name: Resolve designated benchmark baseline
+        id: baseline-resolution
+        if: ${{ !cancelled() && steps.test.outputs.archive != '' }}
+        env:
+          GH_TOKEN: ${{ github.token }}
+          BTP_BENCHMARK_ENV_REVISION: ${{ vars.BTP_BENCHMARK_ENV_REVISION }}
+        run: python3 benchmarks/btp/baseline-artifact.py resolve --reference benchmarks/btp/baseline-ref.json --workspace . --temp-dir "$RUNNER_TEMP"
+
+      - name: Install CLI for baseline preflight
+        id: baseline-cli
+        if: ${{ !cancelled() && steps.baseline-resolution.outputs.baseline_path != '' }}
+        env:
+          XP_METRICS_CI_VERSION: v0.9.2
+          XP_METRICS_CI_RELEASE_TOKEN: ${{ secrets.XP_DIADROMOS_RELEASE_TOKEN }}
+          XP_METRICS_CI_ACTION_PATH: ${{ github.workspace }}/.github/actions/xp-diadromos/.github/actions/metrics-ci-report
+          RUNNER_OS: Linux
+          RUNNER_ARCH: X64
+          RUNNER_TEMP: ${{ runner.temp }}
+        run: .github/actions/xp-diadromos/.github/actions/metrics-ci-report/install-cli.sh
+
+      - name: Validate baseline and current report evidence
+        id: baseline-validation
+        if: ${{ !cancelled() && steps.baseline-resolution.outputs.baseline_path != '' && steps.test.outputs.archive != '' }}
+        run: |
+          set -euo pipefail
+          python3 benchmarks/btp/baseline-artifact.py validate \
+            --baseline "${{ steps.baseline-resolution.outputs.baseline_path }}" \
+            --current "${{ steps.test.outputs.archive }}" \
+            --report-cli "${{ steps.baseline-cli.outputs.binary }}" \
+            --provenance "${{ steps.baseline-resolution.outputs.baseline_provenance }}" \
+            --temp-dir "$RUNNER_TEMP"
+
       - name: Publish available benchmark report
         id: report
         if: ${{ !cancelled() && steps.test.outputs.archive != '' }}
         uses: ./.github/actions/xp-diadromos/.github/actions/metrics-ci-report
         with:
           input: ${{ steps.test.outputs.archive }}
+          baseline: ${{ steps.baseline-validation.outputs.baseline_path }}
           version: v0.9.2
           release-token: ${{ secrets.XP_DIADROMOS_RELEASE_TOKEN }}
           presentation: benchmarks/btp/report-presentation.yaml
@@ -190,7 +230,39 @@ jobs:
       - name: Verify published report contract
         id: verify
         if: ${{ !cancelled() && steps.report.outputs.report-json != '' }}
-        run: ./benchmarks/btp/verify-report.sh "${{ steps.report.outputs.report-json }}"
+        run: |
+          if [[ "${{ steps.baseline-validation.outcome == 'success' && steps.baseline-validation.outputs.baseline_mode || 'current-only' }}" == comparison; then
+            ./benchmarks/btp/verify-report.sh --comparison "${{ steps.report.outputs.report-json }}"
+          else
+            ./benchmarks/btp/verify-report.sh "${{ steps.report.outputs.report-json }}"
+          fi
+
+      - name: Record baseline status
+        if: ${{ !cancelled() }}
+        env:
+          MODE: ${{ steps.baseline-validation.outcome == 'success' && steps.baseline-validation.outputs.baseline_mode || 'current-only' }}
+          REASON: ${{ (steps.baseline-validation.outcome == 'failure' || steps.baseline-resolution.outcome == 'failure' || steps.baseline-cli.outcome == 'failure') && 'download_unavailable' || steps.baseline-validation.outputs.baseline_reason || steps.baseline-resolution.outputs.baseline_reason }}
+          PROVENANCE: ${{ steps.baseline-validation.outputs.baseline_provenance || steps.baseline-resolution.outputs.baseline_provenance }}
+        run: |
+          if [[ "$MODE" == comparison && -n "$PROVENANCE" ]]; then
+            printf 'Baseline: designated default-branch run provenance `%s`. This is not necessarily the PR base revision. Changes are rounded descriptive observations, not significance or causality claims.\n\n' "$PROVENANCE" >> "$GITHUB_STEP_SUMMARY"
+          else
+            case "$REASON" in
+              expired) message='designated artifact expired' ;;
+              not_found) message='designated artifact unavailable' ;;
+              access_denied) message='artifact access denied' ;;
+              download_unavailable) message='artifact could not be retrieved' ;;
+              invalid_reference) message='designation is invalid' ;;
+              invalid_archive) message='designated archive failed validation' ;;
+              incompatible_contract) message='benchmark contract is incompatible' ;;
+              environment_revision_mismatch) message='benchmark environment revision does not match' ;;
+              self_comparison) message='baseline and current run identities are not distinct' ;;
+              identity_unavailable) message='run identity is unavailable' ;;
+              unsuitable_evidence) message='designated archive lacks required evidence' ;;
+              *) message='no designated artifact is configured' ;;
+            esac
+            printf 'Baseline unavailable — %s; showing current-only measurements.\n\n' "$message" >> "$GITHUB_STEP_SUMMARY"
+          fi
 
       - name: Upload metrics archive
         id: archive
@@ -291,6 +363,13 @@ jobs:
           REPORT_AVAILABLE: ${{ needs.benchmark.outputs.report_available }}
           TEST_OUTCOME: ${{ needs.benchmark.outputs.test_outcome }}
           TEST_EXIT_CODE: ${{ needs.benchmark.outputs.test_exit_code }}
+          BASELINE_MODE: ${{ needs.benchmark.outputs.report_mode }}
+          BASELINE_REASON: ${{ needs.benchmark.outputs.baseline_reason }}
+          BASELINE_PROVENANCE: ${{ needs.benchmark.outputs.baseline_provenance }}
+          BASELINE_RUN_ID: ${{ needs.benchmark.outputs.baseline_run_id }}
+          BASELINE_ATTEMPT: ${{ needs.benchmark.outputs.baseline_attempt }}
+          BASELINE_ARTIFACT_ID: ${{ needs.benchmark.outputs.baseline_artifact_id }}
+          BASELINE_HEAD_SHA: ${{ needs.benchmark.outputs.baseline_head_sha }}
         run: |
           set -euo pipefail
           if [[ -n "$ARTIFACT_URL" ]]; then
@@ -303,6 +382,30 @@ jobs:
           else
             measurements='_Measurement table unavailable; see the report artifact linked in the Actions run._'
           fi
+          if [[ "$BASELINE_MODE" == comparison ]]; then
+            [[ "$BASELINE_RUN_ID" =~ ^[1-9][0-9]*$ && "$BASELINE_ATTEMPT" =~ ^[1-9][0-9]*$ && "$BASELINE_ARTIFACT_ID" =~ ^[1-9][0-9]*$ && "$BASELINE_HEAD_SHA" =~ ^[0-9a-f]{40}$ ]] || {
+              echo 'Validated baseline provenance is malformed.' >&2; exit 1;
+            }
+            baseline_run_link="[run $BASELINE_RUN_ID attempt $BASELINE_ATTEMPT]($GITHUB_SERVER_URL/$GITHUB_REPOSITORY/actions/runs/$BASELINE_RUN_ID)"
+            baseline_artifact_link="[artifact $BASELINE_ARTIFACT_ID]($GITHUB_SERVER_URL/$GITHUB_REPOSITORY/actions/runs/$BASELINE_RUN_ID/artifacts/$BASELINE_ARTIFACT_ID)"
+            baseline_note="Baseline: designated default-branch $baseline_run_link, $baseline_artifact_link; provider SHA \`$BASELINE_HEAD_SHA\`. $BASELINE_PROVENANCE. This may not be the PR base revision. Changes are rounded descriptive observations, not significance or causality claims. See the full report for context and resolved-Pod identity differences."
+          else
+            case "$BASELINE_REASON" in
+              expired) reason='designated artifact expired' ;;
+              not_found) reason='designated artifact unavailable' ;;
+              access_denied) reason='artifact access denied' ;;
+              download_unavailable) reason='artifact could not be retrieved' ;;
+              invalid_reference) reason='designation is invalid' ;;
+              invalid_archive) reason='designated archive failed validation' ;;
+              incompatible_contract) reason='benchmark contract is incompatible' ;;
+              environment_revision_mismatch) reason='benchmark environment revision does not match' ;;
+              self_comparison) reason='baseline and current run identities are not distinct' ;;
+              identity_unavailable) reason='run identity is unavailable' ;;
+              unsuitable_evidence) reason='designated archive lacks required evidence' ;;
+              *) reason='no designated artifact is configured' ;;
+            esac
+            baseline_note="Baseline unavailable — $reason; showing current-only measurements."
+          fi
           body="$(cat <<EOF
           <!-- btp-synthetic-benchmark-archive -->
           ### BTP benchmark metrics archive
@@ -310,6 +413,8 @@ jobs:
           $archive_link
 
           ### Measurements (report-only; status: not_evaluated)
+
+          $baseline_note
 
           $measurements
 
