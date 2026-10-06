@@ -313,9 +313,20 @@ func TestBenchmarkWorkflowToolPins(t *testing.T) {
 		t.Fatalf("parse benchmark config: %v", err)
 	}
 	k6Image := config.K6.CustomImage == "ghcr.io/gergely-szabo-sap/xp-diadromos-k6:v0.9.2"
-	modeOutput := workflow.Jobs["benchmark"].Outputs["report_mode"] == "current-only"
-	if !actionCheckout || !execution || !report || !k6Image || !modeOutput {
-		t.Fatalf("unexpected benchmark tool selection/report mode: checkout=%v execution-v0.9.2=%v report-v0.9.2=%v k6-image-v0.9.2=%v current-only-output=%v", actionCheckout, execution, report, k6Image, modeOutput)
+	modeOutput := strings.Contains(workflow.Jobs["benchmark"].Outputs["report_mode"], "baseline-validation") &&
+		strings.Contains(workflow.Jobs["benchmark"].Outputs["report_mode"], "current-only")
+	workflowText := string(content)
+	baselineWiring := strings.Contains(workflowText, "actions: read") &&
+		strings.Contains(workflowText, "baseline-artifact.py resolve") &&
+		strings.Contains(workflowText, "baseline-artifact.py validate") &&
+		strings.Contains(workflowText, "baseline: ${{ steps.baseline-validation.outputs.baseline_path }}") &&
+		strings.Contains(workflowText, "baseline-ref.json")
+	if !actionCheckout || !execution || !report || !k6Image || !modeOutput || !baselineWiring {
+		t.Fatalf("unexpected benchmark tool selection/report mode: checkout=%v execution-v0.9.2=%v report-v0.9.2=%v k6-image-v0.9.2=%v dynamic-mode-output=%v baseline-wiring=%v", actionCheckout, execution, report, k6Image, modeOutput, baselineWiring)
+	}
+	ref, err := os.ReadFile(filepath.Join(root, "benchmarks/btp/baseline-ref.json"))
+	if err != nil || strings.TrimSpace(string(ref)) != `{"schema_version":"v1","baseline":null}` {
+		t.Fatalf("initial baseline reference must remain explicitly disabled: err=%v value=%s", err, ref)
 	}
 }
 

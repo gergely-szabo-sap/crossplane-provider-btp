@@ -65,6 +65,61 @@ python3 benchmarks/btp/validate-metrics-archive.py \
 
 The validator requires distinct archive files/bytes and verifies that the Markdown has exactly the four-column comparison table; its report verifier checks both archive roles and distinct run identities. Outputs remain in the private directory. This manual replay does not retrieve GitHub artifacts, designate a baseline, or activate comparison in the workflow. This check does not establish visual correctness. Inspect the dashboard with the supported pinned Perses renderer on a capable host, confirm the single iteration sample is visible, and note its lookback persistence and evaluation resolution. Existing archives need an explicitly supported Perses import to preview changed dashboard bytes; the stats override does not rewrite the archive's embedded dashboard. Pinned CLI replay and visual acceptance are separate gates. Neither requires a live BTP run.
 
+## Designated baseline bootstrap, refresh, and rollback
+
+The checked-in `benchmarks/btp/baseline-ref.json` starts with `baseline: null`; comparison is therefore disabled until an operator designates one immutable artifact. A missing, expired, inaccessible, incompatible, or unsuitable designation produces an explicit current-only report and does not select another run. The baseline is a successful confirmed default-branch manual dispatch, not necessarily the PR base revision. The comparison remains report-only (`not_evaluated`).
+
+The repository environment must define the non-secret `BTP_BENCHMARK_ENV_REVISION`. This is an operator attestation for relevant account/setup changes, not proof that secret values or remote configuration are equal. Increment it when setup changes invalidate comparisons; do not record account identities, credential hashes, secrets, or HMACs in the descriptor.
+
+### Bootstrap a candidate (causes real BTP resource creation)
+
+Only an account owner/operator with explicit live-run authorization may dispatch. The command below starts the existing 25-resource workload; it is not a read-only inspection:
+
+```bash
+gh workflow run run-btp-benchmark.yaml --ref <default-branch> \
+  -f confirm_dedicated_account=true
+```
+
+Wait for the run to finish and verify workflow success, archive/report availability, five-kind lifecycle evidence, and remote deletion plus all five API-credential revocations. A successful workflow is not by itself proof of remote cleanup. Preserve the run ID, attempt, tested SHA, and private ownership/cleanup record. Do not enable a push/schedule trigger or dispatch as part of designation.
+
+### Read-only artifact inspection and designation
+
+These commands only inspect metadata/artifact identity, except that the helper downloads the selected archive privately for validation. Obtain the exact run/attempt and artifact ID; never use a latest-run query:
+
+```bash
+gh run view <run-id> --json databaseId,attempt,headSha,headBranch,event,status,conclusion
+# Exact artifact ID and expiry for the named run (review the returned metadata):
+gh api "repos/$(gh repo view --json nameWithOwner -q .nameWithOwner)/actions/runs/<run-id>/artifacts" \
+  --jq '.artifacts[] | select(.name == "btp-synthetic-benchmark-metrics-<run-id>-<attempt>") | {id,name,expired,expires_at,size_in_bytes}'
+```
+
+Use a trusted, released `xp-diadromos` v0.9.2 binary. The helper confirms the workflow path, successful `workflow_dispatch` from the repository default branch, exact attempt/SHA/artifact identity and name, current contract digest, environment revision, checksum generation, archive completeness, and required lifecycle evidence. It writes only a descriptor to a new output path and refuses to overwrite it. Set `GH_TOKEN` through an authorized secret manager with the minimum required same-repository Actions/Contents read access; never put its value in a command, shell history, descriptor, or log.
+
+```bash
+umask 077
+mkdir -m 700 /tmp/btp-baseline-designation
+export RUNNER_TEMP=/tmp/btp-baseline-designation
+# Supply GH_TOKEN and the non-secret environment revision from approved sources.
+python3 benchmarks/btp/baseline-artifact.py designate \
+  --run-id <run-id> --run-attempt <attempt> --artifact-id <artifact-id> \
+  --head-sha <40-hex-provider-sha> \
+  --environment-revision "$BTP_BENCHMARK_ENV_REVISION" \
+  --report-cli /trusted/path/xp-diadromos-v0.9.2 \
+  --output /tmp/btp-baseline-designation/baseline-ref.json
+```
+
+Privately review the generated non-secret JSON, then propose a small reviewed change replacing only `benchmarks/btp/baseline-ref.json`. Do not commit or upload the downloaded archive, reports, temporary output, kubeconfigs, provider package, or diagnostics. Delete the private temporary directory after the review. The helper does not dispatch, publish, commit, overwrite the checked-in reference, or change artifact retention.
+
+Comparison activates only after the descriptor change is merged and later eligible workflows run. In an eligible workflow, the benchmark job resolves only that exact artifact, verifies compatibility and archive evidence before comparison, and passes only the validated private archive path to the report action. The downloaded baseline and preflight reports are never uploaded. The published report artifact remains the action's explicit JSON/Markdown allowlist; the separately published metrics artifact remains the selected finalized current archive only. The PR comment contains validated run/attempt/source SHA/artifact/expiry provenance and links only to the authenticated GitHub run/artifact download page. It never exposes archive bytes, signed download URLs, or resolved identity notes.
+
+### Refresh, expiry, and rollback
+
+Artifacts retain the existing seven-day lifetime; a descriptor does not extend it. Refresh before the actual `expires_at` using a newly authorized default-branch dispatch and the same reviewed designation process. If refresh is not practical, request a separate retention/privacy review rather than silently expanding retention. Once the selected artifact expires or is deleted, workflows publish the existing current-only table with a fixed baseline-unavailable notice; there is no automatic promotion or fallback to another run. Default-branch contract files or the attested environment revision changing also make a reference incompatible and requires a fresh reviewed designation.
+
+To disable comparison immediately, merge `{"schema_version":"v1","baseline":null}`. Roll back to an earlier reference only if that exact artifact still exists, is unexpired, and remains contract/environment compatible. Never treat a prior descriptor as durable if its artifact has expired. The benchmark token remains read-only (`actions: read`, `contents: read`); metadata maintenance does not grant `contents: write` or `actions: write`.
+
+The workflow may still execute/publish current measurements if baseline resolution is unavailable. A corrupt current archive, current report/preflight failure, report installation/publication failure, lifecycle-verifier failure, or comment sanitizer failure remains visible; baseline fallback must not retry the report or mask those errors. When comparison is active, all 28 existing presentation rows remain, with upstream-rendered baseline/current values and descriptive changes; no percentages are recomputed from display text and no policies or thresholds are added.
+
 ## Local-versus-CI build comparison
 
 The CI job builds and packages the checked-out reviewed SHA for Linux AMD64, then gives that package to xp-diadromos as `provider:v0`. The local debug script instead requires a caller-supplied provider `.xpkg`, assigns `provider:v0`, and does not verify that the package was built from the current worktree or the same SHA as CI. The local and CI configs use the same Crossplane version, k6 image, resource workload, ProviderConfig fields, and credential environment-variable names, but identical credential values alone do not establish provider-build parity. Before any approved live comparison, record and compare the local artifact's source SHA/build provenance with the reviewed CI SHA and confirm both package paths use the same provider code. Do not print credentials or inspect raw diagnostic messages in ordinary CI logs.
