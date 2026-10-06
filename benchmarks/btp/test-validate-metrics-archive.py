@@ -17,7 +17,8 @@ VALIDATOR = ROOT / "validate-metrics-archive.py"
 
 STUB = r'''#!/usr/bin/env python3
 import http.server, json, os, pathlib, sys, urllib.parse
-version = os.environ.get("STUB_VERSION", "0.8.1")
+cli_name = pathlib.Path(sys.argv[0]).name
+version = os.environ.get("STUB_REPORT_VERSION" if cli_name == "report-cli" else "STUB_EXECUTION_VERSION", "0.9.2")
 args = sys.argv[1:]
 with open(os.environ["COMMAND_LOG"], "a") as log:
     log.write(json.dumps(args) + "\n")
@@ -67,12 +68,14 @@ raise SystemExit(2)
 '''
 
 
-def invoke(*, version="0.8.1", execution_cli=False, fail=False, malformed=False, unavailable=False, nan=False, infinity=False, checks="array", expected=0):
+def invoke(*, report_version="0.9.2", execution_version="0.9.2", fail=False, malformed=False, unavailable=False, nan=False, infinity=False, checks="array", expected=0):
     with tempfile.TemporaryDirectory(prefix="btp-replay-test-") as directory:
         root = Path(directory)
-        cli = root / "xp-diadromos"
-        cli.write_text(textwrap.dedent(STUB))
-        cli.chmod(0o700)
+        report_cli = root / "report-cli"
+        execution_cli = root / "execution-cli"
+        for cli in (report_cli, execution_cli):
+            cli.write_text(textwrap.dedent(STUB))
+            cli.chmod(0o700)
         archive = root / "fixture.tsdb.tar.zst"
         archive.write_bytes(b"synthetic-not-an-archive")
         presentation = root / "presentation.yaml"
@@ -110,7 +113,8 @@ def invoke(*, version="0.8.1", execution_cli=False, fail=False, malformed=False,
         out.mkdir(mode=0o700)
         command_log = root / "commands.jsonl"
         port_file = root / "port"
-        env = dict(os.environ, STUB_VERSION=version, VALID_REPORT=str(VALID_REPORT),
+        env = dict(os.environ, STUB_REPORT_VERSION=report_version,
+                   STUB_EXECUTION_VERSION=execution_version, VALID_REPORT=str(VALID_REPORT),
                    COMMAND_LOG=str(command_log), PORT_FILE=str(port_file))
         if fail: env["STUB_FAIL"] = "command"
         if malformed: env["STUB_MALFORMED"] = "1"
@@ -118,11 +122,10 @@ def invoke(*, version="0.8.1", execution_cli=False, fail=False, malformed=False,
         if nan: env["STUB_NAN"] = "1"
         if infinity: env["STUB_INFINITY"] = "1"
         env["STUB_CHECKS"] = checks
-        command = [sys.executable, str(VALIDATOR), "--report-cli", str(cli),
+        command = [sys.executable, str(VALIDATOR), "--report-cli", str(report_cli),
                    "--archive", str(archive), "--presentation", str(presentation),
-                   "--dashboard", str(dashboard), "--output-dir", str(out)]
-        if execution_cli:
-            command.extend(["--execution-cli", str(cli)])
+                   "--dashboard", str(dashboard), "--output-dir", str(out),
+                   "--execution-cli", str(execution_cli)]
         result = subprocess.run(command, env=env, text=True, stdout=subprocess.PIPE, stderr=subprocess.PIPE, timeout=15)
         if (result.returncode == 0) != (expected == 0):
             raise AssertionError(f"unexpected result {result.returncode}: {result.stderr}")
@@ -140,8 +143,8 @@ def invoke(*, version="0.8.1", execution_cli=False, fail=False, malformed=False,
 
 def main():
     invoke()
-    invoke(execution_cli=True)
-    invoke(version="0.0.0-dev", expected=1)
+    invoke(report_version="0.0.0-dev", expected=1)
+    invoke(execution_version="0.8.1", expected=1)
     invoke(fail=True, expected=1)
     invoke(malformed=True, expected=1)
     invoke(nan=True)
