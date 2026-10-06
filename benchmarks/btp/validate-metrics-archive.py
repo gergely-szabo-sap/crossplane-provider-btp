@@ -34,6 +34,16 @@ def regular_file(path: Path, description: str, executable: bool = False) -> Path
     return path.resolve()
 
 
+def sha256_file(path: Path) -> str:
+    import hashlib
+
+    digest = hashlib.sha256()
+    with path.open("rb") as stream:
+        for chunk in iter(lambda: stream.read(1024 * 1024), b""):
+            digest.update(chunk)
+    return digest.hexdigest()
+
+
 def run(args: list[str], *, output: Path | None = None) -> str:
     result = subprocess.run(args, stdout=subprocess.PIPE, stderr=subprocess.PIPE, check=False)
     if result.returncode:
@@ -174,18 +184,32 @@ def replay_queries(cli: Path, archive: Path, output: Path, queries: list[tuple[s
             proc.wait(timeout=10)
 
 
-def report_rows(markdown: str) -> list[list[str]]:
+def report_rows(markdown: str, comparison: bool) -> list[list[str]]:
     lines = markdown.splitlines()
-    start = next((i for i, line in enumerate(lines) if line.strip() == "| Measurement | Value |"), None)
-    if start is None or start + 1 >= len(lines) or not lines[start + 1].strip().startswith("| ---"):
-        fail("CI Markdown has no expected measurement table")
+    header = "| Measurement | Baseline | Current | Change (%) |" if comparison else "| Measurement | Value |"
+    separator = "| --- | ---: | ---: | ---: |" if comparison else "| --- | ---: |"
+    starts = [i for i, line in enumerate(lines) if line.strip() in (
+        "| Measurement | Value |", "| Measurement | Baseline | Current | Change (%) |",
+    )]
+    if len(starts) != 1 or lines[starts[0]].strip() != header or starts[0] + 1 >= len(lines) or lines[starts[0] + 1].strip() != separator:
+        fail("CI Markdown table does not match the requested report mode")
     rows = []
-    for line in lines[start + 2:]:
+    for line in lines[starts[0] + 2:]:
         if not line.strip().startswith("|"):
             break
         cells = [part.strip() for part in line.strip().strip("|").split("|")]
-        if len(cells) != 2:
+        if len(cells) != (4 if comparison else 2):
             fail("CI Markdown contains a malformed measurement row")
+        if not re.fullmatch(r"[A-Za-z][A-Za-z0-9 ()-]{0,119}", cells[0]):
+            fail("CI Markdown contains an unexpected measurement label")
+        value_pattern = re.compile(r"(?:-?(?:[0-9]{1,3}(?:,[0-9]{3})+|[0-9]+)(?:[.][0-9]+)?(?:[eE][+-]?[0-9]+)?(?: (?:ms|count|cores|bytes|millicores|MiB))?|n/a|unavailable|Unavailable — [A-Za-z0-9 ,.;:-]{1,200})\Z", re.IGNORECASE)
+        if comparison:
+            change_pattern = re.compile(r"(?:[+-]?[0-9]+[.][0-9]%|n/a|unavailable|Unavailable — (?:baseline|current): [A-Za-z0-9 ,.;:_-]{1,180})\Z", re.IGNORECASE)
+            valid = all(value_pattern.fullmatch(value) for value in cells[1:3]) and change_pattern.fullmatch(cells[3])
+        else:
+            valid = value_pattern.fullmatch(cells[1]) is not None
+        if not valid:
+            fail("CI Markdown contains an unsafe measurement value")
         rows.append(cells)
     return rows
 
@@ -195,6 +219,7 @@ def main() -> int:
     parser.add_argument("--report-cli", required=True, type=Path)
     parser.add_argument("--execution-cli", type=Path)
     parser.add_argument("--archive", required=True, type=Path)
+    parser.add_argument("--baseline", type=Path, help="optional approved baseline archive for private comparison replay")
     parser.add_argument("--presentation", type=Path, default=Path("benchmarks/btp/report-presentation.yaml"))
     parser.add_argument("--dashboard", type=Path, default=Path("benchmarks/btp/perses/overview.yaml"))
     parser.add_argument("--output-dir", required=True, type=Path)
@@ -203,6 +228,9 @@ def main() -> int:
         report_cli = regular_file(args.report_cli, "report CLI", executable=True)
         execution_cli = regular_file(args.execution_cli or args.report_cli, "execution CLI", executable=True)
         archive = regular_file(args.archive, "archive")
+        baseline = regular_file(args.baseline, "baseline archive") if args.baseline else None
+        if baseline is not None and (baseline == archive or sha256_file(baseline) == sha256_file(archive)):
+            fail("baseline and current archives must be distinct files and bytes")
         presentation = regular_file(args.presentation, "presentation")
         dashboard = regular_file(args.dashboard, "dashboard")
         out = args.output_dir
@@ -243,6 +271,8 @@ def main() -> int:
         json_with, md_with = out / "report-with-presentation.json", out / "report-with-presentation.md"
         json_without, md_without = out / "report-without-presentation.json", out / "report-without-presentation.md"
         base = [str(report_cli), "metrics", "stats", "--ci", "--input", str(archive), "--dashboard", str(dashboard)]
+        if baseline is not None:
+            base += ["--baseline", str(baseline)]
         run(base + ["--presentation", str(presentation), "--output", str(json_with), "--summary-output", str(md_with)])
         run(base + ["--output", str(json_without), "--summary-output", str(md_without)])
         if json_with.read_bytes() != json_without.read_bytes():
@@ -251,13 +281,13 @@ def main() -> int:
         checks = report.get("checks")
         if report.get("status") != "not_evaluated" or report.get("policy") is not None or checks not in (None, []):
             fail("report-only status, policy, or checks contract is invalid")
-        rows = report_rows(md_with.read_text(encoding="utf-8"))
+        rows = report_rows(md_with.read_text(encoding="utf-8"), baseline is not None)
         if len(rows) != 28:
             fail(f"presentation has {len(rows)} rows; expected exactly 28")
-        if any(value.startswith("Unavailable") or value.lower() in ("n/a", "unavailable") for _, value in rows):
+        if baseline is None and any(value.startswith("Unavailable") or value.lower() in ("n/a", "unavailable") for _, value in rows):
             fail("one or more presentation rows are unavailable")
         verifier = Path(__file__).with_name("verify-report.sh")
-        run(["bash", str(verifier), str(json_with)])
+        run(["bash", str(verifier), "--comparison", str(json_with)] if baseline is not None else ["bash", str(verifier), str(json_with)])
         (out / "replay-summary.json").write_text(json.dumps({
             "execution_cli": EXPECTED_EXECUTION,
             "report_cli": EXPECTED_REPORT,

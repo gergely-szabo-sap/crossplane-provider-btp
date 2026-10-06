@@ -6,6 +6,49 @@ trap 'rm -rf "$tmp"' EXIT
 "$root/verify-report.sh" "$root/tests/report-valid.json" >"$tmp/valid.log"
 grep -F 'exactly five instances' "$tmp/valid.log" >/dev/null
 
+jq '.archives[0].archive.run_id = "baseline-run" |
+    .archives += [(.archives[0] | .archive.run_id = "current-run")]' \
+  "$root/tests/report-valid.json" >"$tmp/comparison.json"
+"$root/verify-report.sh" --comparison "$tmp/comparison.json" >"$tmp/comparison.log"
+grep -F 'Baseline archive' "$tmp/comparison.log" >/dev/null
+grep -F 'Current archive' "$tmp/comparison.log" >/dev/null
+reject_file() {
+  local name=$1 file=$2
+  if "$root/verify-report.sh" "$file" >"$tmp/$name.log" 2>&1; then
+    echo "unexpectedly accepted $name fixture" >&2
+    exit 1
+  fi
+}
+jq '.archives[1].archive.run_id = "baseline-run"' "$tmp/comparison.json" >"$tmp/equal-runs.json"
+if "$root/verify-report.sh" --comparison "$tmp/equal-runs.json" >"$tmp/equal-runs.log" 2>&1; then
+  echo 'unexpectedly accepted equal archive run identities' >&2
+  exit 1
+fi
+jq 'del(.archives[1].archive.run_id)' "$tmp/comparison.json" >"$tmp/missing-identity.json"
+if "$root/verify-report.sh" --comparison "$tmp/missing-identity.json" >"$tmp/missing-identity.log" 2>&1; then
+  echo 'unexpectedly accepted missing archive run identity' >&2
+  exit 1
+fi
+jq '.archives += [.archives[0]]' "$tmp/comparison.json" >"$tmp/extra-archive.json"
+if "$root/verify-report.sh" --comparison "$tmp/extra-archive.json" >"$tmp/extra-archive.log" 2>&1; then
+  echo 'unexpectedly accepted extra archive' >&2
+  exit 1
+fi
+jq '.archives[0].k6_metrics |= map(select(.metric != "xp_time_to_ready" or .tags.resource_kind != "Directory"))' \
+  "$tmp/comparison.json" >"$tmp/baseline-invalid.json"
+if "$root/verify-report.sh" --comparison "$tmp/baseline-invalid.json" >"$tmp/baseline-invalid.log" 2>&1; then
+  echo 'unexpectedly accepted invalid baseline evidence' >&2
+  exit 1
+fi
+grep -F 'Baseline archive: Directory ready evidence: missing' "$tmp/baseline-invalid.log" >/dev/null
+jq '.archives[1].k6_metrics |= map(select(.metric != "xp_time_to_ready" or .tags.resource_kind != "Directory"))' \
+  "$tmp/comparison.json" >"$tmp/current-invalid.json"
+if "$root/verify-report.sh" --comparison "$tmp/current-invalid.json" >"$tmp/current-invalid.log" 2>&1; then
+  echo 'unexpectedly accepted invalid current evidence' >&2
+  exit 1
+fi
+grep -F 'Current archive: Directory ready evidence: missing' "$tmp/current-invalid.log" >/dev/null
+
 jq '.archives[0].k6_metrics += [
   {"source":"raw_k6","metric":"xp_lifecycle_phase_duration","metric_type":"trend","sample_count":1,"finite_sample_count":1,"percentiles":{"p50":600000},"tags":{"resource_kind":"DirectoryEntitlement","stage":"readiness","outcome":"timeout","reason":"timeout"}},
   {"source":"raw_k6","metric":"xp_measurement_phase","metric_type":"counter","sample_count":1,"sum":1,"tags":{"resource_kind":"DirectoryEntitlement","stage":"create_request","field":"accepted"}},
@@ -23,13 +66,6 @@ if grep -F -e 'private-resource-name' -e 'private-error' -e 'private-condition-m
   exit 1
 fi
 
-reject_file() {
-  local name=$1 file=$2
-  if "$root/verify-report.sh" "$file" >"$tmp/$name.log" 2>&1; then
-    echo "unexpectedly accepted $name fixture" >&2
-    exit 1
-  fi
-}
 reject() {
   local name=$1 expression=$2
   jq "$expression" "$root/tests/report-valid.json" >"$tmp/$name.json"
