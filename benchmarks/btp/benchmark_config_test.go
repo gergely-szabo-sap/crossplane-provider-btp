@@ -269,6 +269,54 @@ func TestBenchmarkPresentationContract(t *testing.T) {
 	}
 }
 
+func TestBenchmarkWorkflowToolPins(t *testing.T) {
+	root := filepath.Join("..", "..")
+	content, err := os.ReadFile(filepath.Join(root, ".github/workflows/run-btp-benchmark.yaml"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	var workflow struct {
+		Jobs map[string]struct {
+			Steps []struct {
+				Name string            `yaml:"name"`
+				Uses string            `yaml:"uses"`
+				With map[string]string `yaml:"with"`
+			} `yaml:"steps"`
+		} `yaml:"jobs"`
+	}
+	if err := yaml.Unmarshal(content, &workflow); err != nil {
+		t.Fatalf("parse benchmark workflow: %v", err)
+	}
+	var actionCheckout, execution, report bool
+	for _, step := range workflow.Jobs["benchmark"].Steps {
+		switch {
+		case step.Name == "Check out pinned xp-diadromos actions":
+			actionCheckout = step.With["repository"] == "gergely-szabo-sap/xp-diadromos" &&
+				step.With["ref"] == "986f84848429e28ee64db70af976c6d2a9472b4e"
+		case strings.HasSuffix(step.Uses, "/run-test"):
+			execution = step.With["version"] == "v0.9.2"
+		case strings.HasSuffix(step.Uses, "/metrics-ci-report"):
+			report = step.With["version"] == "v0.9.2" && step.With["input"] == "${{ steps.test.outputs.archive }}"
+		}
+	}
+	configBytes, err := os.ReadFile(filepath.Join(root, "benchmarks/btp/config.yaml"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	var config struct {
+		K6 struct {
+			CustomImage string `yaml:"custom_image"`
+		} `yaml:"k6"`
+	}
+	if err := yaml.Unmarshal(configBytes, &config); err != nil {
+		t.Fatalf("parse benchmark config: %v", err)
+	}
+	k6Image := config.K6.CustomImage == "ghcr.io/gergely-szabo-sap/xp-diadromos-k6:v0.9.2"
+	if !actionCheckout || !execution || !report || !k6Image {
+		t.Fatalf("unexpected benchmark tool selection: checkout=%v execution-v0.9.2=%v report-v0.9.2=%v k6-image-v0.9.2=%v", actionCheckout, execution, report, k6Image)
+	}
+}
+
 func TestBenchmarkCommentSanitizerInlineStep(t *testing.T) {
 	root := filepath.Join("..", "..")
 	workflowBytes, err := os.ReadFile(filepath.Join(root, ".github/workflows/run-btp-benchmark.yaml"))
