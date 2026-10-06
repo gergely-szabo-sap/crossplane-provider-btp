@@ -231,7 +231,7 @@ jobs:
         id: verify
         if: ${{ !cancelled() && steps.report.outputs.report-json != '' }}
         run: |
-          if [[ "${{ steps.baseline-validation.outcome == 'success' && steps.baseline-validation.outputs.baseline_mode || 'current-only' }}" == comparison; then
+          if [[ "${{ steps.baseline-validation.outcome == 'success' && steps.baseline-validation.outputs.baseline_mode || 'current-only' }}" == comparison ]]; then
             ./benchmarks/btp/verify-report.sh --comparison "${{ steps.report.outputs.report-json }}"
           else
             ./benchmarks/btp/verify-report.sh "${{ steps.report.outputs.report-json }}"
