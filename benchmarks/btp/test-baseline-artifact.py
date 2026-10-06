@@ -101,28 +101,83 @@ def main():
     else: raise AssertionError("insecure artifact redirect accepted")
 
     class FakeGitHub:
-        def __init__(self, wrong_attempt=False): self.wrong_attempt = wrong_attempt
-        def get(self, path):
-            if "/actions/runs/" in path:
-                return {"id": 123, "path": module.WORKFLOW + "@refs/heads/main", "event": "workflow_dispatch",
+        def __init__(self, run_changes=None, artifact_changes=None):
+            self.run = {"id": 123, "path": module.WORKFLOW + "@refs/heads/main", "event": "workflow_dispatch",
                         "head_branch": "main", "head_sha": "a" * 40, "status": "completed",
-                        "conclusion": "success", "run_attempt": 3 if self.wrong_attempt else 2}
-            if path.endswith("/repos/org/repo"):
-                return {"default_branch": "main"}
-            return {"id": 456, "name": module.ARTIFACT_PREFIX + "123-2", "expired": False,
-                    "size_in_bytes": 100, "expires_at": "2026-10-13T00:00:00Z",
-                    "workflow_run": {"id": 123, "head_sha": "a" * 40, "event": "workflow_dispatch", "run_attempt": 2}}
+                        "conclusion": "success", "run_attempt": 2}
+            self.run.update(run_changes or {})
+            self.artifact = {"id": 456, "name": module.ARTIFACT_PREFIX + "123-2", "expired": False,
+                             "size_in_bytes": 100, "expires_at": "2026-10-13T00:00:00Z",
+                             # Documented artifact workflow_run shape has no event/attempt.
+                             "workflow_run": {"id": 123, "head_sha": "a" * 40}}
+            self.artifact.update(artifact_changes or {})
+        def get(self, path):
+            if "/actions/runs/" in path: return self.run
+            if path.endswith("/repos/org/repo"): return {"default_branch": "main"}
+            return self.artifact
+
+    reference = descriptor()["baseline"]
     good = object.__new__(module.GitHub)
     good.repo = "org/repo"
     good.get = FakeGitHub().get
-    reference = descriptor()["baseline"]
     assert good.run_and_artifact(reference)[1]["id"] == 456
-    wrong = object.__new__(module.GitHub)
-    wrong.repo = "org/repo"
-    wrong.get = FakeGitHub(wrong_attempt=True).get
-    try: wrong.run_and_artifact(reference)
-    except module.Unavailable as error: assert error.reason == "invalid_reference"
-    else: raise AssertionError("wrong producer attempt accepted")
+
+    invalid_runs = [
+        {"event": "pull_request"}, {"head_branch": "other"}, {"head_sha": "b" * 40},
+        {"status": "in_progress"}, {"conclusion": "failure"}, {"run_attempt": 3},
+        {"path": "other.yaml@refs/heads/main"}, {"id": 999},
+    ]
+    for change in invalid_runs:
+        candidate = object.__new__(module.GitHub)
+        candidate.repo = "org/repo"
+        candidate.get = FakeGitHub(run_changes=change).get
+        try: candidate.run_and_artifact(reference)
+        except module.Unavailable as error: assert error.reason == "invalid_reference"
+        else: raise AssertionError(f"invalid workflow run accepted: {change}")
+
+    invalid_artifacts = [
+        {"id": 999}, {"name": module.ARTIFACT_PREFIX + "123-1"}, {"expired": True},
+        {"size_in_bytes": 0}, {"size_in_bytes": module.MAX_ZIP + 1},
+        {"workflow_run": {"id": 999, "head_sha": "a" * 40}},
+        {"workflow_run": {"id": 123, "head_sha": "b" * 40}},
+        {"workflow_run": {"head_sha": "a" * 40}},
+    ]
+    for change in invalid_artifacts:
+        candidate = object.__new__(module.GitHub)
+        candidate.repo = "org/repo"
+        candidate.get = FakeGitHub(artifact_changes=change).get
+        try: candidate.run_and_artifact(reference)
+        except module.Unavailable: pass
+        else: raise AssertionError(f"invalid artifact metadata accepted: {change}")
+
+    content_data = {name: (name + "\nsynthetic").encode() for name in module.CONTRACT_FILES}
+    for wrapping, trailing in (("\n", ""), ("\r\n", ""), ("\n", "\r\n")):
+        candidate = object.__new__(module.GitHub)
+        candidate.repo = "org/repo"
+        def content_response(path, wrapping=wrapping, trailing=trailing):
+            name = __import__("urllib.parse", fromlist=["unquote"]).unquote(
+                path.split("/contents/", 1)[1].split("?", 1)[0])
+            encoded = __import__("base64").b64encode(content_data[name]).decode()
+            return {"encoding": "base64", "content": encoded[:8] + wrapping + encoded[8:] + trailing}
+        candidate.get = content_response
+        decoded = candidate.source_bytes("a" * 40)
+        assert decoded == content_data
+        assert module.contract_digest(decoded) == module.contract_digest(content_data)
+    for malformed in ("SGVsbG8= !", "SGVsbG8=\t", "SGVsbG8", "SGVsbG8=="):
+        candidate = object.__new__(module.GitHub)
+        candidate.repo = "org/repo"
+        candidate.get = lambda _path, malformed=malformed: {"encoding": "base64", "content": malformed}
+        try: candidate.source_bytes("a" * 40)
+        except module.Unavailable as error: assert error.reason == "incompatible_contract"
+        else: raise AssertionError(f"invalid Base64 accepted: {malformed!r}")
+    for response in ({"encoding": "utf-8", "content": "SGVsbG8="},
+                     {"encoding": "base64", "content": 123}):
+        candidate = object.__new__(module.GitHub)
+        candidate.repo = "org/repo"
+        candidate.get = lambda _path, response=response: response
+        try: candidate.source_bytes("a" * 40)
+        except module.Unavailable as error: assert error.reason == "incompatible_contract"
+        else: raise AssertionError(f"invalid Contents metadata accepted: {response!r}")
 
     with tempfile.TemporaryDirectory() as td:
         root = Path(td)

@@ -139,7 +139,10 @@ class GitHub:
             item = self.get(f"/repos/{self.repo}/contents/{path}?ref={sha}")
             if not isinstance(item, dict) or item.get("encoding") != "base64" or not isinstance(item.get("content"), str):
                 raise Unavailable("incompatible_contract")
-            try: result[name] = base64.b64decode(item["content"], validate=True)
+            # GitHub Contents responses may wrap Base64 transport text in CR/LF.
+            # Normalize only those line breaks; retain strict alphabet/padding checks.
+            encoded = item["content"].replace("\r", "").replace("\n", "")
+            try: result[name] = base64.b64decode(encoded, validate=True)
             except (ValueError, base64.binascii.Error): raise Unavailable("incompatible_contract")
         return result
 
@@ -160,8 +163,7 @@ class GitHub:
             raise Unavailable("not_found")
         artifact_run = a.get("workflow_run") if isinstance(a, dict) else None
         if (not isinstance(artifact_run, dict) or artifact_run.get("id") != ref["run_id"] or
-            artifact_run.get("head_sha") != ref["head_sha"] or artifact_run.get("event") != "workflow_dispatch" or
-            artifact_run.get("run_attempt") != ref["run_attempt"]):
+            artifact_run.get("head_sha") != ref["head_sha"]):
             raise Unavailable("invalid_reference")
         if a.get("name") != name or a.get("expired") is not False:
             raise Unavailable("expired" if a.get("expired") is True else "invalid_reference")
