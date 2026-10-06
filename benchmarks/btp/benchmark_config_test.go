@@ -403,26 +403,35 @@ func TestBenchmarkCommentSanitizerInlineStep(t *testing.T) {
 		t.Fatalf("renderer-compatible table was not normalized as expected: %q", result)
 	}
 	reportMode = "comparison"
-	comparisonRows := []string{"| Measurement | Baseline | Current | Change (%) |", "| --- | ---: | ---: | ---: |"}
-	for i := 0; i < 28; i++ {
-		change := "+12.3%"
-		switch i {
-		case 0:
-			change = "Unavailable — baseline: zero baseline; current: missing"
-		case 1:
-			change = "-3.4%"
-		case 2:
-			change = "+0.0%"
-		}
-		comparisonRows = append(comparisonRows, "| Measurement "+strings.Repeat("x", i%4)+" | 1 ms | 2 ms | "+change+" |")
+	comparisonFixturePath := filepath.Join(root, "benchmarks/btp/tests/presentation-comparison-renderer.md")
+	comparisonFixture, err := os.ReadFile(comparisonFixturePath)
+	if err != nil {
+		t.Fatal(err)
 	}
-	comparison := invoke(t, strings.Join(comparisonRows, "\n")+"\n", false, true)
-	if !strings.Contains(comparison, "| Measurement x | 1 ms | 2 ms | +12.3% |") ||
-		!strings.Contains(comparison, "| Measurement x | 1 ms | 2 ms | -3.4% |") ||
-		!strings.Contains(comparison, "| Measurement xx | 1 ms | 2 ms | +0.0% |") {
-		t.Fatalf("comparison table was not preserved: %q", comparison)
+	comparison := invoke(t, string(comparisonFixture), false, true)
+	for _, expected := range []string{
+		"| Mean time until Subaccount is Ready (client-observed) | 500 ms | 510 ms | +2.0% |",
+		"| Provider container maximum sampled CPU usage | 250 millicores | 250 millicores | +0.0% |",
+		"| Subaccount observed reconciliation errors | 0 count | 1 count | Unavailable — percentage change requires a strictly positive baseline |",
+		"Unavailable — baseline: evidence missing; current: observed",
+	} {
+		if !strings.Contains(comparison, expected) {
+			t.Errorf("comparison table lost renderer value %q: %q", expected, comparison)
+		}
+	}
+	for _, reason := range []string{
+		"measurement definition differs between runs", "metric type differs between runs",
+		"metric kind differs between runs", "distinct run identity is unavailable",
+		"baseline and current identify the same run", "percentage change requires a strictly positive baseline",
+		"change unavailable because a side cannot be represented in its display unit",
+		"percentage change is outside the finite numeric range",
+	} {
+		hostile := strings.Replace(string(comparisonFixture), "Unavailable — "+reason, "Unavailable — "+reason+"!", 1)
+		invoke(t, hostile, false, false)
 	}
 	for _, hostile := range []string{
+		strings.Replace(string(comparisonFixture), "+4.0%", "Unavailable — made-up reason", 1),
+		strings.Replace(string(comparisonFixture), "+4.0%", "Unavailable — metric type differs between runs <b>x</b>", 1),
 		"| Measurement | Baseline | Current | Change (%) |\n| --- | ---: | ---: | ---: |\n| X | 1 ms | 2 ms | [link](https://example.com) |\n",
 		"| Measurement | Baseline | Current | Change (%) |\n| --- | ---: | ---: | ---: |\n| X | 1 ms | 2 ms | baseline: hostile |\n",
 	} {
