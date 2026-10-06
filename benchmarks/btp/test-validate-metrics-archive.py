@@ -68,13 +68,18 @@ if args[:2] == ["metrics", "stats"]:
         report["checks"] = None
     elif checks == "nonempty":
         report["checks"] = [{"status": "failed"}]
-    fixture = pathlib.Path(os.environ["CURRENT_RENDERER_FIXTURE"]).read_text().splitlines()[2:]
-    rows = [tuple(cell.strip() for cell in line.strip().strip("|").split("|")) for line in fixture if line.startswith("|")]
-    if os.environ.get("STUB_UNAVAILABLE"):
-        rows = [(label, "Unavailable — missing evidence") for label, _ in rows]
+    current_fixture = pathlib.Path(os.environ["CURRENT_RENDERER_FIXTURE"]).read_text().splitlines()[2:]
+    rows = [tuple(cell.strip() for cell in line.strip().strip("|").split("|")) for line in current_fixture if line.startswith("|")]
     if comparison:
-        md = "| Measurement | Baseline | Current | Change (%) |\n| --- | ---: | ---: | ---: |\n" + "".join(f"| {label} | 3 ms | {value} | +1.0% |\n" for label, value in rows)
+        md = pathlib.Path(os.environ["COMPARISON_RENDERER_FIXTURE"]).read_text()
+        if os.environ.get("STUB_UNAVAILABLE"):
+            md = "| Measurement | Baseline | Current | Change (%) |\n| --- | ---: | ---: | ---: |\n" + "".join(
+                f"| {label} | Unavailable — missing evidence | 2 ms | Unavailable — baseline: missing evidence |\n"
+                for label, _, _, _ in [tuple(cell.strip() for cell in line.strip().strip("|").split("|")) for line in md.splitlines()[2:] if line.startswith("|")]
+            )
     else:
+        if os.environ.get("STUB_UNAVAILABLE"):
+            rows = [(label, "Unavailable — missing evidence") for label, _ in rows]
         md = "| Measurement | Value |\n| --- | ---: |\n" + "".join(f"| {label} | {value} |\n" for label, value in rows)
     pathlib.Path(args[args.index("--output") + 1]).write_text(json.dumps(report))
     pathlib.Path(args[args.index("--summary-output") + 1]).write_text(md)
@@ -131,6 +136,7 @@ def invoke(*, report_version="0.9.2", execution_version="0.9.2", fail=False, mal
         env = dict(os.environ, STUB_REPORT_VERSION=report_version,
                    STUB_EXECUTION_VERSION=execution_version, VALID_REPORT=str(VALID_REPORT),
                    CURRENT_RENDERER_FIXTURE=str(CURRENT_RENDERER),
+                   COMPARISON_RENDERER_FIXTURE=str(ROOT / "tests/presentation-comparison-renderer.md"),
                    COMMAND_LOG=str(command_log), PORT_FILE=str(port_file))
         if fail: env["STUB_FAIL"] = "command"
         if malformed: env["STUB_MALFORMED"] = "1"
@@ -155,6 +161,10 @@ def invoke(*, report_version="0.9.2", execution_version="0.9.2", fail=False, mal
             commands = [json.loads(line) for line in command_log.read_text().splitlines()]
             ci = [command for command in commands if command[:3] == ["metrics", "stats", "--ci"]]
             assert len(ci) == 2 and ci[0][ci[0].index("--dashboard") + 1] == ci[1][ci[1].index("--dashboard") + 1]
+            if baseline and not unavailable:
+                markdown = (out / "report-with-presentation.md").read_text()
+                assert "Unavailable — percentage change requires a strictly positive baseline" in markdown
+                assert "| Subaccount observed reconciliation errors | 0 count | 1 count | Unavailable — percentage change requires a strictly positive baseline |" in markdown
         if port_file.exists():
             with socket.socket() as probe:
                 assert probe.connect_ex(("127.0.0.1", int(port_file.read_text()))) != 0
@@ -167,13 +177,35 @@ def test_report_rows_renderer_fixture():
     assert rows[5][0] == "Mean time until Subaccount is Ready (client-observed)"
     assert rows[7][0] == "Mean time until Subaccount Kubernetes object is absent (client-observed)"
     for escaped in (r"Unsupported \q label", r"Unsupported \x28 label", "<b>unsafe</b>", "[link](https://example.com)"):
-        malformed = markdown.replace(rows[0][0], escaped, 1)
+        malformed = markdown.replace("Provider container mean CPU usage", escaped, 1)
         try:
             validator.report_rows(malformed, comparison=False)
         except RuntimeError:
             pass
         else:
             raise AssertionError(f"unsafe measurement label accepted: {escaped!r}")
+
+    comparison = (ROOT / "tests/presentation-comparison-renderer.md").read_text()
+    comparison_rows = validator.report_rows(comparison, comparison=True)
+    assert len(comparison_rows) == 28
+    assert comparison_rows[23][1:4] == ["0 count", "1 count", "Unavailable — percentage change requires a strictly positive baseline"]
+    for reason in validator.UNAVAILABLE_CHANGE_REASONS:
+        assert f"Unavailable — {reason}" in comparison
+        malformed = comparison.replace(f"Unavailable — {reason}", f"Unavailable — {reason}!")
+        try:
+            validator.report_rows(malformed, comparison=True)
+        except RuntimeError:
+            pass
+        else:
+            raise AssertionError(f"hostile unavailable reason suffix accepted: {reason!r}")
+    for hostile in ("Unavailable — made-up reason", "Unavailable — baseline: ok [link](https://example.com)", "Unavailable — metric type differs between runs <b>x</b>"):
+        malformed = comparison.replace("+4.0%", hostile, 1)
+        try:
+            validator.report_rows(malformed, comparison=True)
+        except RuntimeError:
+            pass
+        else:
+            raise AssertionError(f"unsafe comparison reason accepted: {hostile!r}")
 
 
 def main():

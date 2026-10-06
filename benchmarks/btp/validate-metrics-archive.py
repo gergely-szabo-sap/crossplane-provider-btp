@@ -20,6 +20,16 @@ import urllib.request
 EXPECTED_EXECUTION = "0.9.2"
 EXPECTED_REPORT = "0.9.2"
 MAX_RESULT_BYTES = 16 * 1024 * 1024
+UNAVAILABLE_CHANGE_REASONS = (
+    "measurement definition differs between runs",
+    "metric type differs between runs",
+    "metric kind differs between runs",
+    "distinct run identity is unavailable",
+    "baseline and current identify the same run",
+    "percentage change requires a strictly positive baseline",
+    "change unavailable because a side cannot be represented in its display unit",
+    "percentage change is outside the finite numeric range",
+)
 
 
 def fail(message: str) -> None:
@@ -205,8 +215,13 @@ def report_rows(markdown: str, comparison: bool) -> list[list[str]]:
             fail("CI Markdown contains an unexpected measurement label")
         value_pattern = re.compile(r"(?:-?(?:[0-9]{1,3}(?:,[0-9]{3})+|[0-9]+)(?:[.][0-9]+)?(?:[eE][+-]?[0-9]+)?(?: (?:ms|count|cores|bytes|millicores|MiB))?|n/a|unavailable|Unavailable — [A-Za-z0-9 ,.;:-]{1,200})\Z", re.IGNORECASE)
         if comparison:
-            change_pattern = re.compile(r"(?:[+-]?[0-9]+[.][0-9]%|n/a|unavailable|Unavailable — (?:baseline|current): [A-Za-z0-9 ,.;:_-]{1,180})\Z", re.IGNORECASE)
-            valid = all(value_pattern.fullmatch(value) for value in cells[1:3]) and change_pattern.fullmatch(cells[3])
+            change_pattern = re.compile(
+                r"(?:[+-]?[0-9]+[.][0-9]%|n/a|unavailable|Unavailable — (?:baseline|current): [A-Za-z0-9 ,.;:_-]{1,180})\Z",
+                re.IGNORECASE,
+            )
+            fixed_changes = {f"Unavailable — {reason}" for reason in UNAVAILABLE_CHANGE_REASONS}
+            valid_change = change_pattern.fullmatch(cells[3]) is not None or cells[3] in fixed_changes
+            valid = all(value_pattern.fullmatch(value) for value in cells[1:3]) and valid_change
         else:
             valid = value_pattern.fullmatch(cells[1]) is not None
         if not valid:
