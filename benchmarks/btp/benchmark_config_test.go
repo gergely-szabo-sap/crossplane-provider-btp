@@ -390,26 +390,17 @@ func TestBenchmarkCommentSanitizerInlineStep(t *testing.T) {
 		return ""
 	}
 
-	rows := []string{"| Measurement | Value |", "| --- | ---: |"}
-	for i := 0; i < 28; i++ {
-		label := "Measurement " + strings.Repeat("x", i%4)
-		value := "1.25 ms"
-		if i == 0 {
-			label = `Readiness (client-observed)`
-			value = "1.419e+06 ms"
-		}
-		if i == 1 {
-			value = "0 count"
-		}
-		if i == 2 {
-			value = "Unavailable — missing evidence"
-		}
-		rows = append(rows, "| "+label+" | "+value+" |")
+	fixturePath := filepath.Join(root, "benchmarks/btp/tests/presentation-current-renderer.md")
+	fixture, err := os.ReadFile(fixturePath)
+	if err != nil {
+		t.Fatal(err)
 	}
-	safe := strings.Join(rows, "\n") + "\n"
+	safe := string(fixture)
 	result := invoke(t, safe, false, true)
-	if !strings.Contains(result, "| Readiness (client-observed) | 1.419e+06 ms |") || strings.Count(result, "\n") != 30 {
-		t.Fatalf("safe full table was not rendered as expected: %q", result)
+	if !strings.Contains(result, "| Mean time until Subaccount is Ready (client-observed) | 500 ms |") ||
+		!strings.Contains(result, "| Mean time until Subaccount Kubernetes object is absent (client-observed) | 250 ms |") ||
+		strings.Count(result, "\n") != 30 {
+		t.Fatalf("renderer-compatible table was not normalized as expected: %q", result)
 	}
 	reportMode = "comparison"
 	comparisonRows := []string{"| Measurement | Baseline | Current | Change (%) |", "| --- | ---: | ---: | ---: |"}
@@ -439,6 +430,8 @@ func TestBenchmarkCommentSanitizerInlineStep(t *testing.T) {
 	}
 	reportMode = "current-only"
 	for _, hostile := range []string{
+		strings.Replace(safe, `Provider container mean CPU usage`, `Provider \q container mean CPU usage`, 1),
+		strings.Replace(safe, `Provider container mean CPU usage`, `<b>unsafe</b>`, 1),
 		"| Measurement | Value |\n| --- | ---: |\n| X | [link](https://example.com) |\n",
 		"| Measurement | Value |\n| --- | ---: |\n| X | @mention |\n",
 		"| Measurement | Value |\n| --- | ---: |\n| X | `code` |\n",

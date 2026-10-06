@@ -200,6 +200,7 @@ def report_rows(markdown: str, comparison: bool) -> list[list[str]]:
         cells = [part.strip() for part in line.strip().strip("|").split("|")]
         if len(cells) != (4 if comparison else 2):
             fail("CI Markdown contains a malformed measurement row")
+        cells[0] = cells[0].replace(r"\(", "(").replace(r"\)", ")")
         if not re.fullmatch(r"[A-Za-z][A-Za-z0-9 ()-]{0,119}", cells[0]):
             fail("CI Markdown contains an unexpected measurement label")
         value_pattern = re.compile(r"(?:-?(?:[0-9]{1,3}(?:,[0-9]{3})+|[0-9]+)(?:[.][0-9]+)?(?:[eE][+-]?[0-9]+)?(?: (?:ms|count|cores|bytes|millicores|MiB))?|n/a|unavailable|Unavailable — [A-Za-z0-9 ,.;:-]{1,200})\Z", re.IGNORECASE)
