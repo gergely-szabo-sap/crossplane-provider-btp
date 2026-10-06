@@ -31,6 +31,7 @@ jobs:
       test_outcome: ${{ steps.test.outcome }}
       test_exit_code: ${{ steps.test.outputs.exit-code }}
       report_available: ${{ steps.report.outcome == 'success' && steps.report.outputs.report-markdown != '' }}
+      report_mode: current-only
     permissions:
       contents: read
     if: >-
@@ -228,6 +229,7 @@ jobs:
         env:
           REPORT_PATH: ${{ runner.temp }}/btp-synthetic-benchmark-reports/benchmark-report.md
           TABLE_PATH: ${{ runner.temp }}/btp-synthetic-benchmark-table.md
+          REPORT_MODE: ${{ needs.benchmark.outputs.report_mode }}
         run: |
           set -euo pipefail
           python3 - <<'PY'
@@ -243,32 +245,40 @@ jobs:
               raise SystemExit("published benchmark Markdown report exceeds 64 KiB")
 
           label_pattern = re.compile(r"[A-Za-z][A-Za-z0-9 ()-]{0,119}\Z")
-          value_pattern = re.compile(
-              r"(?:-?(?:\d{1,3}(?:,\d{3})+|\d+)(?:\.\d+)?(?:[eE][+-]?\d+)?(?:\s(?:ms|count|cores|bytes|millicores|MiB))?|n/a|unavailable|Unavailable — [A-Za-z0-9 ,.-]{1,200})\Z",
-              re.IGNORECASE,
-          )
+          number = r"-?(?:\d{1,3}(?:,\d{3})+|\d+)(?:\.\d+)?(?:[eE][+-]?\d+)?"
+          value_pattern = re.compile(rf"(?:{number}(?:\s(?:ms|count|cores|bytes|millicores|MiB))?|n/a|unavailable|Unavailable — [A-Za-z0-9 ,.;:-]{{1,200}})\Z", re.IGNORECASE)
+          change_pattern = re.compile(r"(?:[+-]?\d+\.\d%|n/a|unavailable|Unavailable — (?:baseline|current): [A-Za-z0-9 ,.;:_-]{1,180})\Z", re.IGNORECASE)
+          mode = os.environ["REPORT_MODE"]
+          headers = {
+              "current-only": ("| Measurement | Value |", "| --- | ---: |", 2),
+              "comparison": ("| Measurement | Baseline | Current | Change (%) |", "| --- | ---: | ---: | ---: |", 4),
+          }
+          if mode not in headers:
+              raise SystemExit("benchmark report mode is invalid")
+          header, separator, columns = headers[mode]
           lines = report_path.read_text(encoding="utf-8").splitlines()
-          start = next((i for i, line in enumerate(lines) if line.strip() == "| Measurement | Value |"), None)
-          if start is None or start + 1 >= len(lines) or not lines[start + 1].strip().startswith("| ---"):
-              raise SystemExit("benchmark report does not contain the expected measurement table")
-
+          recognized = [i for i, line in enumerate(lines) if line.strip() in (headers["current-only"][0], headers["comparison"][0])]
+          if len(recognized) != 1 or lines[recognized[0]].strip() != header:
+              raise SystemExit("benchmark report table does not match the expected report mode")
+          start = recognized[0]
+          if start + 1 >= len(lines) or lines[start + 1].strip() != separator:
+              raise SystemExit("benchmark report has an invalid table separator")
           rows = []
           for line in lines[start + 2:]:
               if not line.strip().startswith("|"):
                   break
               cells = [cell.strip() for cell in line.strip().strip("|").split("|")]
-              if len(cells) == 2:
-                  cells[0] = cells[0].replace(r"\(", "(").replace(r"\)", ")")
-              if len(cells) != 2 or not label_pattern.fullmatch(cells[0]) or not value_pattern.fullmatch(cells[1]):
+              cells[0] = cells[0].replace(r"\(", "(").replace(r"\)", ")")
+              if len(cells) != columns or not label_pattern.fullmatch(cells[0]):
                   raise SystemExit("benchmark report contains an unexpected measurement row")
-              rows.append(f"| {cells[0]} | {cells[1]} |")
-          if not rows:
-              raise SystemExit("benchmark report measurement table is empty")
-
-          table_path.write_text(
-              "| Measurement | Value |\n| --- | ---: |\n" + "\n".join(rows) + "\n",
-              encoding="utf-8",
-          )
+              valid = (all(value_pattern.fullmatch(cell) for cell in cells[1:]) if mode == "current-only"
+                       else all(value_pattern.fullmatch(cell) for cell in cells[1:3]) and change_pattern.fullmatch(cells[3]))
+              if not valid:
+                  raise SystemExit("benchmark report contains an unsafe measurement cell")
+              rows.append("| " + " | ".join(cells) + " |")
+          if len(rows) != 28:
+              raise SystemExit("benchmark report must contain exactly 28 measurement rows")
+          table_path.write_text(header + "\n" + separator + "\n" + "\n".join(rows) + "\n", encoding="utf-8")
           PY
 
       - name: Publish benchmark archive link on pull request
