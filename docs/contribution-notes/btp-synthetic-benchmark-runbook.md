@@ -93,7 +93,7 @@ gh api "repos/$(gh repo view --json nameWithOwner -q .nameWithOwner)/actions/run
   --jq '.artifacts[] | select(.name == "btp-synthetic-benchmark-metrics-<run-id>-<attempt>") | {id,name,expired,expires_at,size_in_bytes}'
 ```
 
-Use a trusted, released `xp-diadromos` v0.9.2 binary. The helper confirms the workflow path, successful `workflow_dispatch` from the repository default branch, exact attempt/SHA/artifact identity and name, current contract digest, environment revision, checksum generation, archive completeness, and required lifecycle evidence. It writes only a descriptor to a new output path and refuses to overwrite it. Set `GH_TOKEN` through an authorized secret manager with the minimum required same-repository Actions/Contents read access; never put its value in a command, shell history, descriptor, or log.
+Use a trusted, released `xp-diadromos` v0.9.2 binary. The helper confirms the workflow path, successful `workflow_dispatch` from the repository default branch, exact attempt/SHA/artifact identity and name, current contract digest, environment revision, checksum generation, archive completeness, and required lifecycle evidence. The descriptor's `run_id` and `run_attempt` are GitHub provenance; the archive's internal `archive.run_id` is a separate CLI-generated identity and is not required to equal the GitHub run ID. The selected artifact's verified run/attempt/name/SHA and the checksum of its extracted bytes establish association. It writes only a descriptor to a new output path and refuses to overwrite it. Set `GH_TOKEN` through an authorized secret manager with the minimum required same-repository Actions/Contents read access; never put its value in a command, shell history, descriptor, or log.
 
 ```bash
 umask 077
@@ -101,6 +101,7 @@ mkdir -m 700 /tmp/btp-baseline-designation
 export RUNNER_TEMP=/tmp/btp-baseline-designation
 # Supply GH_TOKEN and the non-secret environment revision from approved sources.
 python3 benchmarks/btp/baseline-artifact.py designate \
+  --repository <owner/repo> \
   --run-id <run-id> --run-attempt <attempt> --artifact-id <artifact-id> \
   --head-sha <40-hex-provider-sha> \
   --environment-revision "$BTP_BENCHMARK_ENV_REVISION" \

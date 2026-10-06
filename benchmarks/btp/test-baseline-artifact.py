@@ -229,6 +229,92 @@ def main():
             assert module.resolve(args) == 0
         assert "baseline_reason=self_comparison" in outputs.read_text()
 
+    with tempfile.TemporaryDirectory(prefix="btp-designation-") as td:
+        root = Path(td)
+        archive_zip = root / "artifact.zip"
+        archive_bytes = b"synthetic designation archive"
+        with zipfile.ZipFile(archive_zip, "w") as archive:
+            archive.writestr("candidate.tsdb.tar.zst", archive_bytes)
+        cli = root / "xp-diadromos"
+        cli.write_text('''#!/usr/bin/env python3
+import json, os, pathlib, sys
+args = sys.argv[1:]
+if args == ["version"]:
+    print(os.environ.get("STUB_VERSION", "xp-diadromos v0.9.2"))
+    raise SystemExit(0)
+report = json.loads(pathlib.Path(os.environ["STUB_REPORT"]).read_text())
+metadata = report["archives"][0]["archive"]
+metadata.update(complete=os.environ.get("STUB_COMPLETE", "true") == "true",
+                run_id=json.loads(os.environ["STUB_IDENTITY"]))
+if os.environ.get("STUB_IDENTITY_MISSING") == "1":
+    metadata.pop("run_id", None)
+if os.environ.get("STUB_LIFECYCLE") == "invalid":
+    report["archives"][0]["k6_metrics"] = []
+pathlib.Path(args[args.index("--output") + 1]).write_text(json.dumps(report))
+pathlib.Path(args[args.index("--summary-output") + 1]).write_text("synthetic")
+''')
+        cli.chmod(0o700)
+        report_template = json.loads((ROOT / "tests/report-valid.json").read_text())
+        report_path = root / "report.json"
+        report_path.write_text(json.dumps(report_template))
+        source = {name: (Path.cwd() / name).read_bytes() for name in module.CONTRACT_FILES}
+
+        class DesignationAPI:
+            def run_and_artifact(self, ref):
+                assert ref["run_id"] == 123 and ref["run_attempt"] == 2 and ref["artifact_id"] == 456
+                return ({"id": 123}, {"expires_at": "2026-10-13T00:00:00Z"})
+            def source_bytes(self, sha):
+                assert sha == "a" * 40
+                return source
+            def download_artifact(self, artifact_id, destination):
+                assert artifact_id == 456
+                shutil.copyfile(archive_zip, destination)
+
+        output_path = root / "designated.json"
+        args = Namespace(run_id=123, run_attempt=2, artifact_id=456, head_sha="a" * 40,
+                         environment_revision="dedicated-account-3", repository="org/repo",
+                         api_url="https://api.github.com", temp_dir=root, report_cli=str(cli),
+                         output=str(output_path))
+        env = {"GH_TOKEN": "synthetic-token", "BTP_BENCHMARK_ENV_REVISION": "dedicated-account-3",
+               "STUB_REPORT": str(report_path), "STUB_IDENTITY": json.dumps("run-1791288000123456789")}
+        with mock.patch.dict(os.environ, env), mock.patch.object(module, "GitHub", return_value=DesignationAPI()):
+            assert module.designate(args) == 0
+        descriptor_written = json.loads(output_path.read_text())
+        designated = descriptor_written["baseline"]
+        assert set(descriptor_written) == {"schema_version", "baseline"}
+        assert descriptor_written["schema_version"] == "v1"
+        assert designated["run_id"] == 123 and designated["run_attempt"] == 2
+        assert designated["artifact_id"] == 456 and designated["head_sha"] == "a" * 40
+        assert designated["archive_sha256"] == hashlib.sha256(archive_bytes).hexdigest()
+        assert designated["contract_sha256"] == module.contract_digest(source)
+        assert designated["execution_cli"] == "v0.9.2"
+        assert designated["environment_revision"] == "dedicated-account-3"
+        assert output_path.stat().st_mode & 0o777 == 0o600
+        assert module.strict_json(output_path)["run_id"] == 123
+
+        original_descriptor = output_path.read_bytes()
+        with mock.patch.dict(os.environ, env), mock.patch.object(module, "GitHub", return_value=DesignationAPI()):
+            try: module.designate(args)
+            except ValueError as error: assert "refusing overwrite" in str(error)
+            else: raise AssertionError("designation overwrote an existing descriptor")
+        assert output_path.read_bytes() == original_descriptor
+
+        invalid_cases = [
+            ({"STUB_IDENTITY_MISSING": "1"}, "identity_unavailable"),
+            ({"STUB_IDENTITY": json.dumps(None)}, "identity_unavailable"),
+            ({"STUB_IDENTITY": json.dumps("  \t")}, "identity_unavailable"),
+            ({"STUB_IDENTITY": json.dumps(123)}, "identity_unavailable"),
+            ({"STUB_VERSION": "xp-diadromos v0.9.1"}, "unsuitable_evidence"),
+            ({"STUB_COMPLETE": "false"}, "unsuitable_evidence"),
+            ({"STUB_LIFECYCLE": "invalid"}, "unsuitable_evidence"),
+        ]
+        for index, (overrides, reason) in enumerate(invalid_cases):
+            args.output = str(root / f"rejected-{index}.json")
+            with mock.patch.dict(os.environ, {**env, **overrides}), mock.patch.object(
+                    module, "GitHub", return_value=DesignationAPI()):
+                assert module.designate(args) == 1
+            assert not Path(args.output).exists()
+
     print("Baseline artifact helper offline tests passed.")
 
 
