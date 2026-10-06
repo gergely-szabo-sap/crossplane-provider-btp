@@ -38,7 +38,7 @@ Provider reconciliation duration and workqueue waiting duration are five-minute 
 
 Lifecycle phase panels separate client-observed Kubernetes create/delete request acceptance from readiness and Kubernetes-object-absence waits. They show stage and outcome; request acceptance and object absence do not establish remote BTP API latency or remote deletion. Phase means are projected sparse gauges with the same lookback caveat as the other k6 observations. The external-operation panel is supplementary Upjet instrumentation grouped only by operation and archive, with a five-minute mean in seconds. Coverage is partial, has no resource-kind attribution, and `connect` must not be assumed to represent a remote HTTP request. Missing series remain missing rather than being inferred or backfilled.
 
-The PR report retains provider CPU/memory samples and lifecycle means, and adds the complete-iteration duration, per-kind readiness medians, and observed reconciliation-error increases for the five exercised controllers. Execution CLI, report CLI, and k6 image v0.9.2 are selected consistently. The report CLI provides reviewed baseline-comparison support; this integration step leaves the optional baseline unset, so output remains current-only. Its supported display units keep CPU and memory readable; durations remain in milliseconds. Readiness statistics are based on five samples per kind and are descriptive, not high-confidence percentiles. Reconciliation errors are observed counter increases, not a failure threshold; a nonzero count alone does not fail an otherwise successful report. The table does not imply continuous throughput, remote API latency, or proof of remote BTP deletion.
+The PR report retains provider CPU/memory samples and lifecycle means, and adds the complete-iteration duration, per-kind readiness medians, and observed reconciliation-error increases for the five exercised controllers. Execution CLI, report CLI, and k6 image v0.9.2 are selected consistently. The workflow explicitly publishes current-only tables today; the optional baseline input is not configured. The verifier and comment sanitizer also understand the released comparison table format, but this is not automatic artifact retrieval or a production baseline designation. Its supported display units keep CPU and memory readable; durations remain in milliseconds. Readiness statistics are based on five samples per kind and are descriptive, not high-confidence percentiles. Reconciliation errors are observed counter increases, not a failure threshold; a nonzero count alone does not fail an otherwise successful report. The table does not imply continuous throughput, remote API latency, or proof of remote BTP deletion.
 
 An explicit, offline-first replay utility is available for trusted CLI binaries and a caller-approved archive. It requires an already-existing private output directory, checks CLI versions, writes query/report results only there, serves the archive on loopback, and terminates the server on completion or failure. It does not install tools, discover credentials, start clusters, publish comments, or upload data. Never place an archive, report, or query output in the repository or a publication artifact. The acceptance replay requires both published execution and report CLIs at v0.9.2; synthetic tests do not replace pinned-release compatibility. For example:
 
@@ -51,7 +51,19 @@ python3 benchmarks/btp/validate-metrics-archive.py \
   --output-dir /tmp/btp-metrics-replay
 ```
 
-This check does not establish visual correctness. Inspect the dashboard with the supported pinned Perses renderer on a capable host, confirm the single iteration sample is visible, and note its lookback persistence and evaluation resolution. Existing archives need an explicitly supported Perses import to preview changed dashboard bytes; the stats override does not rewrite the archive's embedded dashboard. Pinned CLI replay and visual acceptance are separate gates. Neither requires a live BTP run.
+For a caller-approved baseline archive, the same private replay utility can exercise the v0.9.2 comparison report path without running a benchmark or publishing data:
+
+```bash
+mkdir -m 700 /tmp/btp-metrics-comparison-replay
+python3 benchmarks/btp/validate-metrics-archive.py \
+  --report-cli /path/to/xp-diadromos-v0.9.2 \
+  --execution-cli /path/to/xp-diadromos-v0.9.2 \
+  --archive /private/path/current.tsdb.tar.zst \
+  --baseline /private/path/approved-baseline.tsdb.tar.zst \
+  --output-dir /tmp/btp-metrics-comparison-replay
+```
+
+The validator requires distinct archive files/bytes and verifies that the Markdown has exactly the four-column comparison table; its report verifier checks both archive roles and distinct run identities. Outputs remain in the private directory. This manual replay does not retrieve GitHub artifacts, designate a baseline, or activate comparison in the workflow. This check does not establish visual correctness. Inspect the dashboard with the supported pinned Perses renderer on a capable host, confirm the single iteration sample is visible, and note its lookback persistence and evaluation resolution. Existing archives need an explicitly supported Perses import to preview changed dashboard bytes; the stats override does not rewrite the archive's embedded dashboard. Pinned CLI replay and visual acceptance are separate gates. Neither requires a live BTP run.
 
 ## Local-versus-CI build comparison
 

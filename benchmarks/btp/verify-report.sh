@@ -1,7 +1,38 @@
 #!/usr/bin/env bash
 set -euo pipefail
 
-report=${1:?usage: verify-report.sh REPORT.json}
+role=${BTP_VERIFY_ROLE:-Current}
+if [[ "${1:-}" == --comparison ]]; then
+  report=${2:?usage: verify-report.sh --comparison REPORT.json}
+  if [[ ! -f "$report" || -L "$report" ]]; then
+    echo 'benchmark report must be a regular, non-symlink JSON file' >&2
+    exit 1
+  fi
+  if ! jq -e '
+    (.archives | type == "array" and length == 2) and
+    ([.archives[] | (.archive.run_id // .archive.runId // empty)] as $ids |
+      ($ids | length == 2) and ($ids | unique | length == 2))
+  ' "$report" >/dev/null 2>&1; then
+    echo 'comparison report must contain baseline and current archives with distinct run identities' >&2
+    exit 1
+  fi
+  tmp=$(mktemp -d)
+  trap 'rm -rf "$tmp"' EXIT
+  jq '.archives = [.archives[0]]' "$report" >"$tmp/baseline.json"
+  jq '.archives = [.archives[1]]' "$report" >"$tmp/current.json"
+  baseline_status=0
+  current_status=0
+  BTP_VERIFY_ROLE=Baseline "$0" "$tmp/baseline.json" || baseline_status=$?
+  BTP_VERIFY_ROLE=Current "$0" "$tmp/current.json" || current_status=$?
+  (( baseline_status == 0 && current_status == 0 ))
+  exit $?
+fi
+if [[ "${1:-}" == --role ]]; then
+  role=${2:?missing role}
+  report=${3:?missing report}
+else
+  report=${1:?usage: verify-report.sh [--comparison] REPORT.json}
+fi
 if [[ ! -f "$report" || -L "$report" ]]; then
   echo 'benchmark report must be a regular, non-symlink JSON file' >&2
   exit 1
@@ -96,14 +127,14 @@ if ! contract_data="$(jq -r '
 fi
 
 base_status=""
-summary=$'## BTP benchmark lifecycle evidence\n\n| Resource kind | Ready | Create operation | Deleted | Delete operation |\n| --- | --- | --- | --- | --- |\n'
+summary=$'## BTP benchmark lifecycle evidence — '"$role"$' archive\n\n| Resource kind | Ready | Create operation | Deleted | Delete operation |\n| --- | --- | --- | --- | --- |\n'
 failures=0
 phase_heading_added=false
 marker_heading_added=false
-while IFS=$'\t' read -r row_type field1 field2 field3 field4 field5 field6 field7; do
+while IFS=$'\t' read -r row_type field1 field2 field3 field4 field5 field6 _; do
   if [[ "$row_type" == FAILURE ]]; then
     ((failures += 1))
-    printf '::error title=Failed BTP lifecycle operation::%s has recorded %s outcome evidence.\n' "$field1" "$field3"
+    printf '::error title=Failed BTP lifecycle operation::%s archive: %s has recorded %s outcome evidence.\n' "$role" "$field1" "$field3"
     continue
   fi
   if [[ "$row_type" == PHASE ]]; then
@@ -142,7 +173,7 @@ while IFS=$'\t' read -r row_type field1 field2 field3 field4 field5 field6 field
     status=${entry#*:}
     if [[ "$status" != ok ]]; then
       ((failures += 1))
-      printf '::error title=Missing BTP lifecycle evidence::%s %s evidence: %s\n' "$kind" "$field" "$status"
+      printf '::error title=Missing BTP lifecycle evidence::%s archive: %s %s evidence: %s\n' "$role" "$kind" "$field" "$status"
     fi
   done
 done <<<"$contract_data"

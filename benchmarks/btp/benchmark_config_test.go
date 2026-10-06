@@ -277,7 +277,8 @@ func TestBenchmarkWorkflowToolPins(t *testing.T) {
 	}
 	var workflow struct {
 		Jobs map[string]struct {
-			Steps []struct {
+			Outputs map[string]string `yaml:"outputs"`
+			Steps   []struct {
 				Name string            `yaml:"name"`
 				Uses string            `yaml:"uses"`
 				With map[string]string `yaml:"with"`
@@ -312,8 +313,9 @@ func TestBenchmarkWorkflowToolPins(t *testing.T) {
 		t.Fatalf("parse benchmark config: %v", err)
 	}
 	k6Image := config.K6.CustomImage == "ghcr.io/gergely-szabo-sap/xp-diadromos-k6:v0.9.2"
-	if !actionCheckout || !execution || !report || !k6Image {
-		t.Fatalf("unexpected benchmark tool selection: checkout=%v execution-v0.9.2=%v report-v0.9.2=%v k6-image-v0.9.2=%v", actionCheckout, execution, report, k6Image)
+	modeOutput := workflow.Jobs["benchmark"].Outputs["report_mode"] == "current-only"
+	if !actionCheckout || !execution || !report || !k6Image || !modeOutput {
+		t.Fatalf("unexpected benchmark tool selection/report mode: checkout=%v execution-v0.9.2=%v report-v0.9.2=%v k6-image-v0.9.2=%v current-only-output=%v", actionCheckout, execution, report, k6Image, modeOutput)
 	}
 }
 
@@ -344,6 +346,7 @@ func TestBenchmarkCommentSanitizerInlineStep(t *testing.T) {
 		t.Fatal("could not isolate the named table-sanitizer step")
 	}
 
+	reportMode := "current-only"
 	invoke := func(t *testing.T, report string, symlink bool, wantSuccess bool) string {
 		t.Helper()
 		dir := t.TempDir()
@@ -361,7 +364,7 @@ func TestBenchmarkCommentSanitizerInlineStep(t *testing.T) {
 		}
 		tablePath := filepath.Join(dir, "table.md")
 		cmd := exec.Command("bash", "-euo", "pipefail", "-c", script)
-		cmd.Env = append(os.Environ(), "REPORT_PATH="+reportPath, "TABLE_PATH="+tablePath)
+		cmd.Env = append(os.Environ(), "REPORT_PATH="+reportPath, "TABLE_PATH="+tablePath, "REPORT_MODE="+reportMode)
 		output, err := cmd.CombinedOutput()
 		if (err == nil) != wantSuccess {
 			t.Fatalf("sanitizer success=%v want %v; output: %s", err == nil, wantSuccess, output)
@@ -397,6 +400,33 @@ func TestBenchmarkCommentSanitizerInlineStep(t *testing.T) {
 	if !strings.Contains(result, "| Readiness (client-observed) | 1.419e+06 ms |") || strings.Count(result, "\n") != 30 {
 		t.Fatalf("safe full table was not rendered as expected: %q", result)
 	}
+	reportMode = "comparison"
+	comparisonRows := []string{"| Measurement | Baseline | Current | Change (%) |", "| --- | ---: | ---: | ---: |"}
+	for i := 0; i < 28; i++ {
+		change := "+12.3%"
+		switch i {
+		case 0:
+			change = "Unavailable — baseline: zero baseline; current: missing"
+		case 1:
+			change = "-3.4%"
+		case 2:
+			change = "+0.0%"
+		}
+		comparisonRows = append(comparisonRows, "| Measurement "+strings.Repeat("x", i%4)+" | 1 ms | 2 ms | "+change+" |")
+	}
+	comparison := invoke(t, strings.Join(comparisonRows, "\n")+"\n", false, true)
+	if !strings.Contains(comparison, "| Measurement x | 1 ms | 2 ms | +12.3% |") ||
+		!strings.Contains(comparison, "| Measurement x | 1 ms | 2 ms | -3.4% |") ||
+		!strings.Contains(comparison, "| Measurement xx | 1 ms | 2 ms | +0.0% |") {
+		t.Fatalf("comparison table was not preserved: %q", comparison)
+	}
+	for _, hostile := range []string{
+		"| Measurement | Baseline | Current | Change (%) |\n| --- | ---: | ---: | ---: |\n| X | 1 ms | 2 ms | [link](https://example.com) |\n",
+		"| Measurement | Baseline | Current | Change (%) |\n| --- | ---: | ---: | ---: |\n| X | 1 ms | 2 ms | baseline: hostile |\n",
+	} {
+		invoke(t, hostile, false, false)
+	}
+	reportMode = "current-only"
 	for _, hostile := range []string{
 		"| Measurement | Value |\n| --- | ---: |\n| X | [link](https://example.com) |\n",
 		"| Measurement | Value |\n| --- | ---: |\n| X | @mention |\n",
@@ -404,6 +434,7 @@ func TestBenchmarkCommentSanitizerInlineStep(t *testing.T) {
 		"| Measurement | Value |\n| --- | ---: |\n| X | <b>html</b> |\n",
 		"| Measurement | Value |\n| --- | ---: |\n| X | 1 widgets |\n",
 		"| Measurement | Value |\n| --- | ---: |\n| X | 1 | extra |\n",
+		"| Measurement | Baseline | Current | Change (%) |\n| --- | ---: | ---: | ---: |\n| X | 1 ms | 2 ms | +1.0% |\n",
 	} {
 		invoke(t, hostile, false, false)
 	}

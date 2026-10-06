@@ -51,6 +51,12 @@ if args[:2] == ["metrics", "stats"]:
         print(json.dumps({"archives":[{"archive":{"complete":True,"first_sample":"2026-10-02T14:49:27Z","last_sample":"2026-10-02T15:13:27Z"}}]}))
         raise SystemExit(0)
     report = json.loads(pathlib.Path(os.environ["VALID_REPORT"]).read_text())
+    comparison = "--baseline" in args
+    if comparison:
+        report["archives"][0]["archive"]["run_id"] = "baseline-run"
+        current = json.loads(json.dumps(report["archives"][0]))
+        current["archive"]["run_id"] = "current-run"
+        report["archives"].append(current)
     checks = os.environ.get("STUB_CHECKS", "array")
     if checks == "null":
         report["checks"] = None
@@ -60,7 +66,10 @@ if args[:2] == ["metrics", "stats"]:
         rows = [(f"Measurement {i}", "Unavailable — missing evidence") for i in range(28)]
     else:
         rows = [(f"Measurement {i}", "4 ms") for i in range(28)]
-    md = "| Measurement | Value |\n| --- | ---: |\n" + "".join(f"| {label} | {value} |\n" for label, value in rows)
+    if comparison:
+        md = "| Measurement | Baseline | Current | Change (%) |\n| --- | ---: | ---: | ---: |\n" + "".join(f"| {label} | 3 ms | {value} | +1.0% |\n" for label, value in rows)
+    else:
+        md = "| Measurement | Value |\n| --- | ---: |\n" + "".join(f"| {label} | {value} |\n" for label, value in rows)
     pathlib.Path(args[args.index("--output") + 1]).write_text(json.dumps(report))
     pathlib.Path(args[args.index("--summary-output") + 1]).write_text(md)
     raise SystemExit(0)
@@ -68,7 +77,7 @@ raise SystemExit(2)
 '''
 
 
-def invoke(*, report_version="0.9.2", execution_version="0.9.2", fail=False, malformed=False, unavailable=False, nan=False, infinity=False, checks="array", expected=0):
+def invoke(*, report_version="0.9.2", execution_version="0.9.2", fail=False, malformed=False, unavailable=False, nan=False, infinity=False, checks="array", baseline=False, expected=0):
     with tempfile.TemporaryDirectory(prefix="btp-replay-test-") as directory:
         root = Path(directory)
         report_cli = root / "report-cli"
@@ -122,8 +131,11 @@ def invoke(*, report_version="0.9.2", execution_version="0.9.2", fail=False, mal
         if nan: env["STUB_NAN"] = "1"
         if infinity: env["STUB_INFINITY"] = "1"
         env["STUB_CHECKS"] = checks
+        baseline_archive = root / "baseline.tsdb.tar.zst"
+        baseline_archive.write_bytes(b"synthetic-baseline-archive")
         command = [sys.executable, str(VALIDATOR), "--report-cli", str(report_cli),
                    "--archive", str(archive), "--presentation", str(presentation),
+                   *( ["--baseline", str(baseline_archive)] if baseline else []),
                    "--dashboard", str(dashboard), "--output-dir", str(out),
                    "--execution-cli", str(execution_cli)]
         result = subprocess.run(command, env=env, text=True, stdout=subprocess.PIPE, stderr=subprocess.PIPE, timeout=15)
@@ -152,6 +164,8 @@ def main():
     invoke(unavailable=True, expected=1)
     invoke(checks="null")
     invoke(checks="nonempty", expected=1)
+    invoke(baseline=True)
+    invoke(baseline=True, unavailable=True)
     print("Archive replay validator synthetic tests passed.")
 
 
