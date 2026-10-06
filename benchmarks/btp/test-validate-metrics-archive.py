@@ -1,6 +1,7 @@
 #!/usr/bin/env python3
 """Offline mechanics tests for validate-metrics-archive.py."""
 
+import importlib.util
 import json
 import os
 from pathlib import Path
@@ -14,6 +15,11 @@ import time
 ROOT = Path(__file__).resolve().parent
 VALID_REPORT = ROOT / "tests/report-valid.json"
 VALIDATOR = ROOT / "validate-metrics-archive.py"
+CURRENT_RENDERER = ROOT / "tests/presentation-current-renderer.md"
+
+spec = importlib.util.spec_from_file_location("validate_metrics_archive", VALIDATOR)
+validator = importlib.util.module_from_spec(spec)
+spec.loader.exec_module(validator)
 
 STUB = r'''#!/usr/bin/env python3
 import http.server, json, os, pathlib, sys, urllib.parse
@@ -62,10 +68,10 @@ if args[:2] == ["metrics", "stats"]:
         report["checks"] = None
     elif checks == "nonempty":
         report["checks"] = [{"status": "failed"}]
+    fixture = pathlib.Path(os.environ["CURRENT_RENDERER_FIXTURE"]).read_text().splitlines()[2:]
+    rows = [tuple(cell.strip() for cell in line.strip().strip("|").split("|")) for line in fixture if line.startswith("|")]
     if os.environ.get("STUB_UNAVAILABLE"):
-        rows = [(f"Measurement {i}", "Unavailable — missing evidence") for i in range(28)]
-    else:
-        rows = [(f"Measurement {i}", "4 ms") for i in range(28)]
+        rows = [(label, "Unavailable — missing evidence") for label, _ in rows]
     if comparison:
         md = "| Measurement | Baseline | Current | Change (%) |\n| --- | ---: | ---: | ---: |\n" + "".join(f"| {label} | 3 ms | {value} | +1.0% |\n" for label, value in rows)
     else:
@@ -124,6 +130,7 @@ def invoke(*, report_version="0.9.2", execution_version="0.9.2", fail=False, mal
         port_file = root / "port"
         env = dict(os.environ, STUB_REPORT_VERSION=report_version,
                    STUB_EXECUTION_VERSION=execution_version, VALID_REPORT=str(VALID_REPORT),
+                   CURRENT_RENDERER_FIXTURE=str(CURRENT_RENDERER),
                    COMMAND_LOG=str(command_log), PORT_FILE=str(port_file))
         if fail: env["STUB_FAIL"] = "command"
         if malformed: env["STUB_MALFORMED"] = "1"
@@ -153,7 +160,24 @@ def invoke(*, report_version="0.9.2", execution_version="0.9.2", fail=False, mal
                 assert probe.connect_ex(("127.0.0.1", int(port_file.read_text()))) != 0
 
 
+def test_report_rows_renderer_fixture():
+    markdown = CURRENT_RENDERER.read_text()
+    rows = validator.report_rows(markdown, comparison=False)
+    assert len(rows) == 28
+    assert rows[5][0] == "Mean time until Subaccount is Ready (client-observed)"
+    assert rows[7][0] == "Mean time until Subaccount Kubernetes object is absent (client-observed)"
+    for escaped in (r"Unsupported \q label", r"Unsupported \x28 label", "<b>unsafe</b>", "[link](https://example.com)"):
+        malformed = markdown.replace(rows[0][0], escaped, 1)
+        try:
+            validator.report_rows(malformed, comparison=False)
+        except RuntimeError:
+            pass
+        else:
+            raise AssertionError(f"unsafe measurement label accepted: {escaped!r}")
+
+
 def main():
+    test_report_rows_renderer_fixture()
     invoke()
     invoke(report_version="0.0.0-dev", expected=1)
     invoke(execution_version="0.8.1", expected=1)
