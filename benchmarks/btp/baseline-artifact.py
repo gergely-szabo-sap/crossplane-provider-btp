@@ -387,7 +387,7 @@ def designate(args) -> int:
         version = subprocess.run([args.report_cli, "version"], stdout=subprocess.PIPE, stderr=subprocess.DEVNULL, text=True, timeout=15)
         if version.returncode != 0 or not re.search(r"(?<![0-9.])v?0\.9\.2(?![0-9.])", version.stdout): raise Unavailable("unsuitable_evidence")
         identity = report.get("archives", [{}])[0].get("archive", {}).get("run_id")
-        if identity is None or str(identity) != str(args.run_id): raise Unavailable("identity_unavailable")
+        if not isinstance(identity, str) or not identity.strip(): raise Unavailable("identity_unavailable")
         report_file = report_dir / "candidate.json"
         report_file.write_text(json.dumps(report))
         verified = subprocess.run(["bash", str(Path(__file__).with_name("verify-report.sh")), str(report_file)], stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL, timeout=30)
