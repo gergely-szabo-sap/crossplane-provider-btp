@@ -10,7 +10,7 @@ spec:
             kind: Panel
             spec:
                 display:
-                    name: Iteration duration
+                    name: Last-observed lifecycle iteration duration
                 plugin:
                     kind: TimeSeriesChart
                     spec:
@@ -27,13 +27,13 @@ spec:
                         plugin:
                             kind: PrometheusTimeSeriesQuery
                             spec:
-                                query: rate(xp_diadromos_k6_iteration_duration_sum[1m]) / rate(xp_diadromos_k6_iteration_duration_count[1m])
+                                query: xp_diadromos_k6_iteration_duration_mean{scenario="create_delete"}
                                 seriesNameFormat: '{{archive_filename}}'
         "0_1":
             kind: Panel
             spec:
                 display:
-                    name: Iterations per second
+                    name: Completed lifecycle iterations
                 plugin:
                     kind: TimeSeriesChart
                     spec:
@@ -45,7 +45,7 @@ spec:
                         plugin:
                             kind: PrometheusTimeSeriesQuery
                             spec:
-                                query: rate(xp_diadromos_k6_iterations_total[1m])
+                                query: xp_diadromos_k6_iterations_total{scenario="create_delete"}
                                 seriesNameFormat: '{{archive_filename}}'
         "1_0":
             kind: Panel
@@ -92,7 +92,7 @@ spec:
             kind: Panel
             spec:
                 display:
-                    name: Time to ready
+                    name: Last-observed time to Ready (client-observed)
                 plugin:
                     kind: TimeSeriesChart
                     spec:
@@ -109,36 +109,13 @@ spec:
                         plugin:
                             kind: PrometheusTimeSeriesQuery
                             spec:
-                                query: sum by (resource_kind, archive_filename) (rate(xp_diadromos_k6_xp_time_to_ready_sum[1m])) / sum by (resource_kind, archive_filename) (rate(xp_diadromos_k6_xp_time_to_ready_count[1m]))
-                                seriesNameFormat: '{{resource_kind}} ({{archive_filename}})'
-        "2_1":
-            kind: Panel
-            spec:
-                display:
-                    name: Time to update
-                plugin:
-                    kind: TimeSeriesChart
-                    spec:
-                        legend:
-                            position: bottom
-                        yAxis:
-                            format:
-                                unit: milliseconds
-                            label: ""
-                            show: true
-                queries:
-                    - kind: TimeSeriesQuery
-                      spec:
-                        plugin:
-                            kind: PrometheusTimeSeriesQuery
-                            spec:
-                                query: sum by (resource_kind, archive_filename) (rate(xp_diadromos_k6_xp_time_to_update_sum[1m])) / sum by (resource_kind, archive_filename) (rate(xp_diadromos_k6_xp_time_to_update_count[1m]))
+                                query: xp_diadromos_k6_xp_time_to_ready_mean{scenario="create_delete"}
                                 seriesNameFormat: '{{resource_kind}} ({{archive_filename}})'
         "2_2":
             kind: Panel
             spec:
                 display:
-                    name: Time to delete
+                    name: Last-observed time until Kubernetes object absence (client-observed)
                 plugin:
                     kind: TimeSeriesChart
                     spec:
@@ -155,7 +132,7 @@ spec:
                         plugin:
                             kind: PrometheusTimeSeriesQuery
                             spec:
-                                query: sum by (resource_kind, archive_filename) (rate(xp_diadromos_k6_xp_time_to_delete_sum[1m])) / sum by (resource_kind, archive_filename) (rate(xp_diadromos_k6_xp_time_to_delete_count[1m]))
+                                query: xp_diadromos_k6_xp_time_to_delete_mean{scenario="create_delete"}
                                 seriesNameFormat: '{{resource_kind}} ({{archive_filename}})'
         "3_0":
             kind: Panel
@@ -193,6 +170,139 @@ spec:
                             spec:
                                 query: sum by (controller, archive_filename) (rate(controller_runtime_reconcile_errors_total{job="provider"}[1m]))
                                 seriesNameFormat: '{{controller}} ({{archive_filename}})'
+        "4_0":
+            kind: Panel
+            spec:
+                display:
+                    name: Mean reconciliation duration (5m window)
+                plugin:
+                    kind: TimeSeriesChart
+                    spec:
+                        legend:
+                            position: bottom
+                        yAxis:
+                            format:
+                                unit: seconds
+                            label: ""
+                            show: true
+                queries:
+                    - kind: TimeSeriesQuery
+                      spec:
+                        plugin:
+                            kind: PrometheusTimeSeriesQuery
+                            spec:
+                                query: sum by (controller, archive_filename) (rate(controller_runtime_reconcile_time_seconds_sum{job="provider",controller=~"^(managed/subaccount[.]account[.]btp[.]sap[.]crossplane[.]io|managed/directory[.]account[.]btp[.]sap[.]crossplane[.]io|managed/entitlement[.]account[.]btp[.]sap[.]crossplane[.]io|managed/account[.]btp[.]sap[.]crossplane[.]io/v1alpha1, kind=directoryentitlement|managed/security[.]btp[.]sap[.]crossplane[.]io/v1alpha1, kind=subaccountapicredential)$"}[5m])) / sum by (controller, archive_filename) (rate(controller_runtime_reconcile_time_seconds_count{job="provider",controller=~"^(managed/subaccount[.]account[.]btp[.]sap[.]crossplane[.]io|managed/directory[.]account[.]btp[.]sap[.]crossplane[.]io|managed/entitlement[.]account[.]btp[.]sap[.]crossplane[.]io|managed/account[.]btp[.]sap[.]crossplane[.]io/v1alpha1, kind=directoryentitlement|managed/security[.]btp[.]sap[.]crossplane[.]io/v1alpha1, kind=subaccountapicredential)$"}[5m]))
+                                seriesNameFormat: '{{controller}} ({{archive_filename}})'
+        "4_1":
+            kind: Panel
+            spec:
+                display:
+                    name: Sampled workqueue depth
+                plugin:
+                    kind: TimeSeriesChart
+                    spec:
+                        legend:
+                            position: bottom
+                queries:
+                    - kind: TimeSeriesQuery
+                      spec:
+                        plugin:
+                            kind: PrometheusTimeSeriesQuery
+                            spec:
+                                query: sum by (controller, archive_filename) (workqueue_depth{job="provider",controller=~"^(managed/subaccount[.]account[.]btp[.]sap[.]crossplane[.]io|managed/directory[.]account[.]btp[.]sap[.]crossplane[.]io|managed/entitlement[.]account[.]btp[.]sap[.]crossplane[.]io|managed/account[.]btp[.]sap[.]crossplane[.]io/v1alpha1, kind=directoryentitlement|managed/security[.]btp[.]sap[.]crossplane[.]io/v1alpha1, kind=subaccountapicredential)$"})
+                                seriesNameFormat: '{{controller}} ({{archive_filename}})'
+        "4_2":
+            kind: Panel
+            spec:
+                display:
+                    name: Mean workqueue waiting duration (5m window)
+                plugin:
+                    kind: TimeSeriesChart
+                    spec:
+                        legend:
+                            position: bottom
+                        yAxis:
+                            format:
+                                unit: seconds
+                            label: ""
+                            show: true
+                queries:
+                    - kind: TimeSeriesQuery
+                      spec:
+                        plugin:
+                            kind: PrometheusTimeSeriesQuery
+                            spec:
+                                query: sum by (controller, archive_filename) (rate(workqueue_queue_duration_seconds_sum{job="provider",controller=~"^(managed/subaccount[.]account[.]btp[.]sap[.]crossplane[.]io|managed/directory[.]account[.]btp[.]sap[.]crossplane[.]io|managed/entitlement[.]account[.]btp[.]sap[.]crossplane[.]io|managed/account[.]btp[.]sap[.]crossplane[.]io/v1alpha1, kind=directoryentitlement|managed/security[.]btp[.]sap[.]crossplane[.]io/v1alpha1, kind=subaccountapicredential)$"}[5m])) / sum by (controller, archive_filename) (rate(workqueue_queue_duration_seconds_count{job="provider",controller=~"^(managed/subaccount[.]account[.]btp[.]sap[.]crossplane[.]io|managed/directory[.]account[.]btp[.]sap[.]crossplane[.]io|managed/entitlement[.]account[.]btp[.]sap[.]crossplane[.]io/v1alpha1, kind=directoryentitlement|managed/security[.]btp[.]sap[.]crossplane[.]io/v1alpha1, kind=subaccountapicredential)$"}[5m]))
+                                seriesNameFormat: '{{controller}} ({{archive_filename}})'
+        "5_0":
+            kind: Panel
+            spec:
+                display:
+                    name: Kubernetes request acceptance phases (client-observed)
+                plugin:
+                    kind: TimeSeriesChart
+                    spec:
+                        legend:
+                            position: bottom
+                        yAxis:
+                            format:
+                                unit: milliseconds
+                            label: ""
+                            show: true
+                queries:
+                    - kind: TimeSeriesQuery
+                      spec:
+                        plugin:
+                            kind: PrometheusTimeSeriesQuery
+                            spec:
+                                query: xp_diadromos_k6_xp_lifecycle_phase_duration_mean{scenario="create_delete",stage=~"create_request|delete_request"}
+                                seriesNameFormat: '{{resource_kind}} / {{stage}} / {{outcome}} ({{archive_filename}})'
+        "5_1":
+            kind: Panel
+            spec:
+                display:
+                    name: Readiness and Kubernetes absence waits (client-observed)
+                plugin:
+                    kind: TimeSeriesChart
+                    spec:
+                        legend:
+                            position: bottom
+                        yAxis:
+                            format:
+                                unit: milliseconds
+                            label: ""
+                            show: true
+                queries:
+                    - kind: TimeSeriesQuery
+                      spec:
+                        plugin:
+                            kind: PrometheusTimeSeriesQuery
+                            spec:
+                                query: xp_diadromos_k6_xp_lifecycle_phase_duration_mean{scenario="create_delete",stage=~"readiness|kubernetes_absence_wait"}
+                                seriesNameFormat: '{{resource_kind}} / {{stage}} / {{outcome}} ({{archive_filename}})'
+        "5_2":
+            kind: Panel
+            spec:
+                display:
+                    name: Instrumented Upjet external-operation duration (supplementary, partial coverage)
+                plugin:
+                    kind: TimeSeriesChart
+                    spec:
+                        legend:
+                            position: bottom
+                        yAxis:
+                            format:
+                                unit: seconds
+                            label: ""
+                            show: true
+                queries:
+                    - kind: TimeSeriesQuery
+                      spec:
+                        plugin:
+                            kind: PrometheusTimeSeriesQuery
+                            spec:
+                                query: sum by (operation, archive_filename) (rate(upjet_resource_ext_api_duration_sum{job="provider"}[5m])) / sum by (operation, archive_filename) (rate(upjet_resource_ext_api_duration_count{job="provider"}[5m]))
+                                seriesNameFormat: '{{operation}} ({{archive_filename}})'
     layouts:
         - kind: Grid
           spec:
@@ -241,19 +351,13 @@ spec:
             items:
                 - x: 0
                   "y": 0
-                  width: 8
+                  width: 12
                   height: 8
                   content:
                     $ref: '#/spec/panels/2_0'
-                - x: 8
+                - x: 12
                   "y": 0
-                  width: 8
-                  height: 8
-                  content:
-                    $ref: '#/spec/panels/2_1'
-                - x: 16
-                  "y": 0
-                  width: 8
+                  width: 12
                   height: 8
                   content:
                     $ref: '#/spec/panels/2_2'
@@ -276,5 +380,55 @@ spec:
                   height: 8
                   content:
                     $ref: '#/spec/panels/3_1'
+        - kind: Grid
+          spec:
+            display:
+                title: Reconciliation and workqueue
+                collapse:
+                    open: true
+            items:
+                - x: 0
+                  "y": 0
+                  width: 12
+                  height: 8
+                  content:
+                    $ref: '#/spec/panels/4_0'
+                - x: 12
+                  "y": 0
+                  width: 12
+                  height: 8
+                  content:
+                    $ref: '#/spec/panels/4_1'
+                - x: 0
+                  "y": 8
+                  width: 12
+                  height: 8
+                  content:
+                    $ref: '#/spec/panels/4_2'
+        - kind: Grid
+          spec:
+            display:
+                title: Lifecycle phases and supplementary operations
+                collapse:
+                    open: true
+            items:
+                - x: 0
+                  "y": 0
+                  width: 12
+                  height: 8
+                  content:
+                    $ref: '#/spec/panels/5_0'
+                - x: 12
+                  "y": 0
+                  width: 12
+                  height: 8
+                  content:
+                    $ref: '#/spec/panels/5_1'
+                - x: 0
+                  "y": 8
+                  width: 24
+                  height: 8
+                  content:
+                    $ref: '#/spec/panels/5_2'
     duration: 1h
     refreshInterval: 0s

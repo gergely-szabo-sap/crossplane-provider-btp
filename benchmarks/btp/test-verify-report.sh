@@ -3,13 +3,62 @@ set -euo pipefail
 root=$(cd "$(dirname "$0")" && pwd)
 tmp=$(mktemp -d)
 trap 'rm -rf "$tmp"' EXIT
-"$root/verify-report.sh" "$root/tests/report-valid.json" >/dev/null
+"$root/verify-report.sh" "$root/tests/report-valid.json" >"$tmp/valid.log"
+grep -F 'exactly five instances' "$tmp/valid.log" >/dev/null
+
+jq '.archives[0].archive.run_id = "baseline-run" |
+    .archives += [(.archives[0] | .archive.run_id = "current-run")]' \
+  "$root/tests/report-valid.json" >"$tmp/comparison.json"
+"$root/verify-report.sh" --comparison "$tmp/comparison.json" >"$tmp/comparison.log"
+grep -F 'Baseline archive' "$tmp/comparison.log" >/dev/null
+grep -F 'Current archive' "$tmp/comparison.log" >/dev/null
+reject_file() {
+  local name=$1 file=$2
+  if "$root/verify-report.sh" "$file" >"$tmp/$name.log" 2>&1; then
+    echo "unexpectedly accepted $name fixture" >&2
+    exit 1
+  fi
+}
+jq '.archives[1].archive.run_id = "baseline-run"' "$tmp/comparison.json" >"$tmp/equal-runs.json"
+if "$root/verify-report.sh" --comparison "$tmp/equal-runs.json" >"$tmp/equal-runs.log" 2>&1; then
+  echo 'unexpectedly accepted equal archive run identities' >&2
+  exit 1
+fi
+jq 'del(.archives[1].archive.run_id)' "$tmp/comparison.json" >"$tmp/missing-identity.json"
+if "$root/verify-report.sh" --comparison "$tmp/missing-identity.json" >"$tmp/missing-identity.log" 2>&1; then
+  echo 'unexpectedly accepted missing archive run identity' >&2
+  exit 1
+fi
+jq '.archives += [.archives[0]]' "$tmp/comparison.json" >"$tmp/extra-archive.json"
+if "$root/verify-report.sh" --comparison "$tmp/extra-archive.json" >"$tmp/extra-archive.log" 2>&1; then
+  echo 'unexpectedly accepted extra archive' >&2
+  exit 1
+fi
+jq '.archives[0].k6_metrics |= map(select(.metric != "xp_time_to_ready" or .tags.resource_kind != "Directory"))' \
+  "$tmp/comparison.json" >"$tmp/baseline-invalid.json"
+if "$root/verify-report.sh" --comparison "$tmp/baseline-invalid.json" >"$tmp/baseline-invalid.log" 2>&1; then
+  echo 'unexpectedly accepted invalid baseline evidence' >&2
+  exit 1
+fi
+grep -F 'Baseline archive: Directory ready evidence: missing' "$tmp/baseline-invalid.log" >/dev/null
+jq '.archives[1].k6_metrics |= map(select(.metric != "xp_time_to_ready" or .tags.resource_kind != "Directory"))' \
+  "$tmp/comparison.json" >"$tmp/current-invalid.json"
+if "$root/verify-report.sh" --comparison "$tmp/current-invalid.json" >"$tmp/current-invalid.log" 2>&1; then
+  echo 'unexpectedly accepted invalid current evidence' >&2
+  exit 1
+fi
+grep -F 'Current archive: Directory ready evidence: missing' "$tmp/current-invalid.log" >/dev/null
+
 jq '.archives[0].k6_metrics += [
   {"source":"raw_k6","metric":"xp_lifecycle_phase_duration","metric_type":"trend","sample_count":1,"finite_sample_count":1,"percentiles":{"p50":600000},"tags":{"resource_kind":"DirectoryEntitlement","stage":"readiness","outcome":"timeout","reason":"timeout"}},
   {"source":"raw_k6","metric":"xp_measurement_phase","metric_type":"counter","sample_count":1,"sum":1,"tags":{"resource_kind":"DirectoryEntitlement","stage":"create_request","field":"accepted"}},
   {"source":"raw_k6","metric":"xp_lifecycle_phase_duration","metric_type":"trend","sample_count":1,"finite_sample_count":1,"percentiles":{"p50":900000},"tags":{"resource_kind":"private-resource-name","stage":"readiness","outcome":"failure","reason":"private-error"}}
 ]' "$root/tests/report-valid.json" >"$tmp/phases.json"
-GITHUB_STEP_SUMMARY="$tmp/phases-summary.md" "$root/verify-report.sh" "$tmp/phases.json" >"$tmp/phases.log"
+if GITHUB_STEP_SUMMARY="$tmp/phases-summary.md" "$root/verify-report.sh" "$tmp/phases.json" >"$tmp/phases.log" 2>&1; then
+  echo 'unexpectedly accepted recorded timeout evidence' >&2
+  exit 1
+fi
+grep -F 'DirectoryEntitlement has recorded timeout outcome evidence' "$tmp/phases.log" >/dev/null
 grep -F '| DirectoryEntitlement | readiness | timeout | timeout | 1 | 600000 |' "$tmp/phases-summary.md" >/dev/null
 grep -F '| DirectoryEntitlement | create_request | accepted | 1 |' "$tmp/phases-summary.md" >/dev/null
 if grep -F -e 'private-resource-name' -e 'private-error' -e 'private-condition-message' "$tmp/phases-summary.md" >/dev/null; then
@@ -20,20 +69,33 @@ fi
 reject() {
   local name=$1 expression=$2
   jq "$expression" "$root/tests/report-valid.json" >"$tmp/$name.json"
-  if "$root/verify-report.sh" "$tmp/$name.json" >/dev/null 2>&1; then
-    echo "unexpectedly accepted $name fixture" >&2
-    exit 1
-  fi
+  reject_file "$name" "$tmp/$name.json"
 }
+
 kinds=(Subaccount Directory Entitlement DirectoryEntitlement SubaccountApiCredential)
 for kind in "${kinds[@]}"; do
   key=$(printf '%s' "$kind" | tr '[:upper:]' '[:lower:]')
+  for spec in 'xp_time_to_ready:ready' 'xp_time_to_delete:deleted' 'xp_operation_duration:create' 'xp_operation_duration:delete'; do
+    metric=${spec%%:*}; operation=${spec#*:}
+    selector=".metric == \"$metric\" and .tags.resource_kind == \"$kind\""
+    [[ "$metric" != xp_operation_duration ]] || selector+=" and .tags.operation == \"$operation\" and .tags.outcome == \"success\""
+    for count in 0 1 4 6; do
+      reject "${key}-${operation}-count-${count}" ".archives[0].k6_metrics |= map(if $selector then .sample_count = $count | .finite_sample_count = $count else . end)"
+    done
+    reject "${key}-${operation}-fractional" ".archives[0].k6_metrics |= map(if $selector then .sample_count = 4.5 | .finite_sample_count = 4.5 else . end)"
+    reject "${key}-${operation}-finite-mismatch" ".archives[0].k6_metrics |= map(if $selector then .finite_sample_count = 4 else . end)"
+    reject "${key}-${operation}-missing-finite" ".archives[0].k6_metrics |= map(if $selector then del(.finite_sample_count) else . end)"
+    reject "${key}-${operation}-wrong-source" ".archives[0].k6_metrics |= map(if $selector then .source = \"tsdb\" else . end)"
+    reject "${key}-${operation}-wrong-type" ".archives[0].k6_metrics |= map(if $selector then .metric_type = \"counter\" else . end)"
+    reject "${key}-${operation}-missing-summary" ".archives[0].k6_metrics |= map(if $selector then .percentiles.p50 = null else . end)"
+    reject "${key}-${operation}-nonfinite" ".archives[0].k6_metrics |= map(if $selector then .finite_sample_count = 0 | .non_finite_sample_count = 5 else . end)"
+    reject "${key}-${operation}-duplicate-group" ".archives[0].k6_metrics += [.archives[0].k6_metrics[] | select($selector)]"
+  done
+  reject "${key}-ready-censored" ".archives[0].k6_metrics |= map(if .metric == \"xp_time_to_ready\" and .tags.resource_kind == \"$kind\" then .censored = true else . end)"
   reject "${key}-missing-ready" ".archives[0].k6_metrics |= map(select(.metric != \"xp_time_to_ready\" or .tags.resource_kind != \"$kind\"))"
   reject "${key}-missing-delete" ".archives[0].k6_metrics |= map(select(.metric != \"xp_time_to_delete\" or .tags.resource_kind != \"$kind\"))"
-  reject "${key}-censored" ".archives[0].k6_metrics |= map(if .metric == \"xp_time_to_ready\" and .tags.resource_kind == \"$kind\" then .censored = true else . end)"
-  reject "${key}-nonfinite" ".archives[0].k6_metrics |= map(if .metric == \"xp_time_to_delete\" and .tags.resource_kind == \"$kind\" then .finite_sample_count = 0 | .non_finite_sample_count = 1 else . end)"
-  reject "${key}-missing-create" ".archives[0].k6_metrics |= map(select(.metric != \"xp_operation_duration\" or .tags.resource_kind != \"$kind\" or .tags.operation != \"create\"))"
-  reject "${key}-missing-delete-operation" ".archives[0].k6_metrics |= map(select(.metric != \"xp_operation_duration\" or .tags.resource_kind != \"$kind\" or .tags.operation != \"delete\"))"
+  reject "${key}-failed-operation-with-success" ".archives[0].k6_metrics += [{\"source\":\"raw_k6\",\"metric\":\"xp_operation_duration\",\"metric_type\":\"trend\",\"sample_count\":1,\"finite_sample_count\":1,\"percentiles\":{\"p50\":10},\"tags\":{\"resource_kind\":\"$kind\",\"operation\":\"create\",\"outcome\":\"failure\",\"reason\":\"api_error\"}}]"
+  reject "${key}-failed-phase" ".archives[0].k6_metrics += [{\"source\":\"raw_k6\",\"metric\":\"xp_lifecycle_phase_duration\",\"metric_type\":\"trend\",\"sample_count\":1,\"finite_sample_count\":1,\"percentiles\":{\"p50\":10},\"tags\":{\"resource_kind\":\"$kind\",\"stage\":\"readiness\",\"outcome\":\"timeout\",\"reason\":\"timeout\"}}]"
 done
 reject multiple-archives '.archives += [.archives[0]]'
 reject policy '.policy = {"filename":"policy.yaml"}'
@@ -42,11 +104,7 @@ reject wrong-status '.status = "passed"'
 
 jq '.archives[0].k6_metrics |= map(select(.metric != "xp_time_to_ready" or .tags.resource_kind != "DirectoryEntitlement"))' \
   "$root/tests/report-valid.json" >"$tmp/directoryentitlement-missing-ready.json"
-if GITHUB_STEP_SUMMARY="$tmp/summary.md" "$root/verify-report.sh" "$tmp/directoryentitlement-missing-ready.json" >"$tmp/failure.log" 2>&1; then
-  echo 'unexpectedly accepted missing DirectoryEntitlement Ready evidence' >&2
-  exit 1
-fi
-grep -F 'DirectoryEntitlement ready evidence: missing' "$tmp/failure.log" >/dev/null
-grep -F '| DirectoryEntitlement | missing | ok | ok | ok |' "$tmp/summary.md" >/dev/null
+reject_file directoryentitlement-missing-ready "$tmp/directoryentitlement-missing-ready.json"
+grep -F 'DirectoryEntitlement ready evidence: missing' "$tmp/directoryentitlement-missing-ready.log" >/dev/null
 
-echo 'Report verifier fixtures passed.'
+printf '%s\n' 'Five-instance report verifier fixtures passed.'
