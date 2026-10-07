@@ -106,7 +106,7 @@ def main():
                 assert f"baseline_reason={reason}" in output.read_text()
 
     workflow = (ROOT.parent.parent / ".github/workflows/run-btp-benchmark.yaml").read_text()
-    resolve = workflow.index("- name: Resolve designated benchmark baseline")
+    resolve = workflow.index("- name: Resolve checked-in benchmark baseline")
     install_cli = workflow.index("- name: Install CLI for baseline preflight")
     validate = workflow.index("- name: Validate baseline and current report evidence")
     report = workflow.index("- name: Publish available benchmark report")
@@ -117,6 +117,8 @@ def main():
     resolver_step = workflow[resolve:install_cli]
     assert "BTP_BENCHMARK_ENV_REVISION" in resolver_step
     assert "GH_TOKEN" not in resolver_step and "actions: read" not in workflow
+    assert "actions/artifacts" not in resolver_step and "expired)" not in workflow
+    assert "baseline_artifact_link" not in workflow
     assert "if: ${{ !cancelled() && steps.test.outputs.archive != '' }}" in workflow[report:verify]
     assert "path: ${{ steps.test.outputs.archive }}" in workflow[upload:failure]
     assert "path: ${{ steps.test.outputs.archive }}/*" not in workflow[upload:failure]

@@ -32,7 +32,7 @@ jobs:
       test_exit_code: ${{ steps.test.outputs.exit-code }}
       report_available: ${{ steps.report.outcome == 'success' && steps.report.outputs.report-markdown != '' }}
       report_mode: ${{ steps.baseline-validation.outcome == 'success' && steps.baseline-validation.outputs.baseline_mode || 'current-only' }}
-      baseline_reason: ${{ (steps.baseline-validation.outcome == 'failure' || steps.baseline-resolution.outcome == 'failure' || steps.baseline-cli.outcome == 'failure') && 'download_unavailable' || steps.baseline-validation.outputs.baseline_reason || steps.baseline-resolution.outputs.baseline_reason }}
+      baseline_reason: ${{ (steps.baseline-validation.outcome == 'failure' || steps.baseline-resolution.outcome == 'failure' || steps.baseline-cli.outcome == 'failure') && 'baseline_validation_failed' || steps.baseline-validation.outputs.baseline_reason || steps.baseline-resolution.outputs.baseline_reason }}
       baseline_provenance: ${{ steps.baseline-validation.outputs.baseline_provenance || steps.baseline-resolution.outputs.baseline_provenance }}
       baseline_run_id: ${{ steps.baseline-resolution.outputs.baseline_run_id }}
       baseline_attempt: ${{ steps.baseline-resolution.outputs.baseline_attempt }}
@@ -181,7 +181,7 @@ jobs:
           GITHUB_RUN_ID: ${{ github.run_id }}
           GITHUB_RUN_ATTEMPT: ${{ github.run_attempt }}
 
-      - name: Resolve designated benchmark baseline
+      - name: Resolve checked-in benchmark baseline
         id: baseline-resolution
         if: ${{ !cancelled() && steps.test.outputs.archive != '' }}
         env:
@@ -239,25 +239,22 @@ jobs:
         if: ${{ !cancelled() }}
         env:
           MODE: ${{ steps.baseline-validation.outcome == 'success' && steps.baseline-validation.outputs.baseline_mode || 'current-only' }}
-          REASON: ${{ (steps.baseline-validation.outcome == 'failure' || steps.baseline-resolution.outcome == 'failure' || steps.baseline-cli.outcome == 'failure') && 'download_unavailable' || steps.baseline-validation.outputs.baseline_reason || steps.baseline-resolution.outputs.baseline_reason }}
+          REASON: ${{ (steps.baseline-validation.outcome == 'failure' || steps.baseline-resolution.outcome == 'failure' || steps.baseline-cli.outcome == 'failure') && 'baseline_validation_failed' || steps.baseline-validation.outputs.baseline_reason || steps.baseline-resolution.outputs.baseline_reason }}
           PROVENANCE: ${{ steps.baseline-validation.outputs.baseline_provenance || steps.baseline-resolution.outputs.baseline_provenance }}
         run: |
           if [[ "$MODE" == comparison && -n "$PROVENANCE" ]]; then
-            printf 'Baseline: designated default-branch run provenance `%s`. This is not necessarily the PR base revision. Changes are rounded descriptive observations, not significance or causality claims.\n\n' "$PROVENANCE" >> "$GITHUB_STEP_SUMMARY"
+            printf 'Baseline: checked-in archive from source run `%s`. This is not necessarily the PR base revision. Changes are rounded descriptive observations, not significance or causality claims.\n\n' "$PROVENANCE" >> "$GITHUB_STEP_SUMMARY"
           else
             case "$REASON" in
-              expired) message='designated artifact expired' ;;
-              not_found) message='designated artifact unavailable' ;;
-              access_denied) message='artifact access denied' ;;
-              download_unavailable) message='artifact could not be retrieved' ;;
-              invalid_reference) message='designation is invalid' ;;
-              invalid_archive) message='designated archive failed validation' ;;
+              baseline_validation_failed) message='baseline validation failed operationally' ;;
+              invalid_reference) message='checked-in reference is invalid' ;;
+              invalid_archive) message='checked-in archive failed validation' ;;
               incompatible_contract) message='benchmark contract is incompatible' ;;
               environment_revision_mismatch) message='benchmark environment revision does not match' ;;
               self_comparison) message='baseline and current run identities are not distinct' ;;
               identity_unavailable) message='run identity is unavailable' ;;
-              unsuitable_evidence) message='designated archive lacks required evidence' ;;
-              *) message='no designated artifact is configured' ;;
+              unsuitable_evidence) message='checked-in archive lacks required evidence' ;;
+              *) message='no checked-in baseline is configured' ;;
             esac
             printf 'Baseline unavailable — %s; showing current-only measurements.\n\n' "$message" >> "$GITHUB_STEP_SUMMARY"
           fi
@@ -397,23 +394,19 @@ jobs:
             [[ "$BASELINE_RUN_ID" =~ ^[1-9][0-9]*$ && "$BASELINE_ATTEMPT" =~ ^[1-9][0-9]*$ && "$BASELINE_ARTIFACT_ID" =~ ^[1-9][0-9]*$ && "$BASELINE_HEAD_SHA" =~ ^[0-9a-f]{40}$ ]] || {
               echo 'Validated baseline provenance is malformed.' >&2; exit 1;
             }
-            baseline_run_link="[run $BASELINE_RUN_ID attempt $BASELINE_ATTEMPT]($GITHUB_SERVER_URL/$GITHUB_REPOSITORY/actions/runs/$BASELINE_RUN_ID)"
-            baseline_artifact_link="[artifact $BASELINE_ARTIFACT_ID]($GITHUB_SERVER_URL/$GITHUB_REPOSITORY/actions/runs/$BASELINE_RUN_ID/artifacts/$BASELINE_ARTIFACT_ID)"
-            baseline_note="Baseline: designated default-branch $baseline_run_link, $baseline_artifact_link; provider SHA \`$BASELINE_HEAD_SHA\`. $BASELINE_PROVENANCE. This may not be the PR base revision. Changes are rounded descriptive observations, not significance or causality claims. See the full report for context and resolved-Pod identity differences."
+            baseline_run_link="[source run $BASELINE_RUN_ID attempt $BASELINE_ATTEMPT]($GITHUB_SERVER_URL/$GITHUB_REPOSITORY/actions/runs/$BASELINE_RUN_ID)"
+            baseline_note="Baseline: checked-in archive from $baseline_run_link; provider SHA \`$BASELINE_HEAD_SHA\`. $BASELINE_PROVENANCE. This may not be the PR base revision. Changes are rounded descriptive observations, not significance or causality claims. See the full report for context and resolved-Pod identity differences."
           else
             case "$BASELINE_REASON" in
-              expired) reason='designated artifact expired' ;;
-              not_found) reason='designated artifact unavailable' ;;
-              access_denied) reason='artifact access denied' ;;
-              download_unavailable) reason='artifact could not be retrieved' ;;
-              invalid_reference) reason='designation is invalid' ;;
-              invalid_archive) reason='designated archive failed validation' ;;
+              baseline_validation_failed) reason='baseline validation failed operationally' ;;
+              invalid_reference) reason='checked-in reference is invalid' ;;
+              invalid_archive) reason='checked-in archive failed validation' ;;
               incompatible_contract) reason='benchmark contract is incompatible' ;;
               environment_revision_mismatch) reason='benchmark environment revision does not match' ;;
               self_comparison) reason='baseline and current run identities are not distinct' ;;
               identity_unavailable) reason='run identity is unavailable' ;;
-              unsuitable_evidence) reason='designated archive lacks required evidence' ;;
-              *) reason='no designated artifact is configured' ;;
+              unsuitable_evidence) reason='checked-in archive lacks required evidence' ;;
+              *) reason='no checked-in baseline is configured' ;;
             esac
             baseline_note="Baseline unavailable — $reason; showing current-only measurements."
           fi
