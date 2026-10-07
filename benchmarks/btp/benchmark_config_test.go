@@ -1,6 +1,7 @@
 package benchmarks
 
 import (
+	"crypto/sha256"
 	"encoding/hex"
 	"encoding/json"
 	"os"
@@ -323,7 +324,7 @@ func TestBenchmarkWorkflowToolPins(t *testing.T) {
 	modeOutput := strings.Contains(workflow.Jobs["benchmark"].Outputs["report_mode"], "baseline-validation") &&
 		strings.Contains(workflow.Jobs["benchmark"].Outputs["report_mode"], "current-only")
 	workflowText := string(content)
-	baselineWiring := strings.Contains(workflowText, "actions: read") &&
+	baselineWiring := !strings.Contains(workflowText, "actions: read") &&
 		strings.Contains(workflowText, "baseline-artifact.py resolve") &&
 		strings.Contains(workflowText, "baseline-artifact.py validate") &&
 		strings.Contains(workflowText, "baseline: ${{ steps.baseline-validation.outputs.baseline_path }}") &&
@@ -338,9 +339,11 @@ func TestBenchmarkWorkflowToolPins(t *testing.T) {
 	var ref struct {
 		SchemaVersion string `json:"schema_version"`
 		Baseline      *struct {
+			ArchivePath         string `json:"archive_path"`
 			RunID               int64  `json:"run_id"`
 			RunAttempt          int64  `json:"run_attempt"`
 			ArtifactID          int64  `json:"artifact_id"`
+			ArtifactExpiresAt   string `json:"artifact_expires_at"`
 			HeadSHA             string `json:"head_sha"`
 			ArchiveSHA256       string `json:"archive_sha256"`
 			ContractSHA256      string `json:"contract_sha256"`
@@ -351,16 +354,26 @@ func TestBenchmarkWorkflowToolPins(t *testing.T) {
 	if err := json.Unmarshal(refBytes, &ref); err != nil {
 		t.Fatalf("parse designated baseline reference: %v", err)
 	}
-	if ref.SchemaVersion != "v1" || ref.Baseline == nil {
-		t.Fatalf("designated baseline reference must use schema v1 and configure a baseline: %s", refBytes)
+	if ref.SchemaVersion != "v2" || ref.Baseline == nil {
+		t.Fatalf("designated baseline reference must use schema v2 and configure a baseline: %s", refBytes)
 	}
 	baseline := ref.Baseline
-	if baseline.RunID <= 0 || baseline.RunAttempt <= 0 || baseline.ArtifactID <= 0 ||
+	if baseline.ArchivePath != "benchmarks/btp/baseline/btp-synthetic-benchmark.tsdb.tar.zst" ||
+		baseline.ArtifactExpiresAt == "" || baseline.RunID <= 0 || baseline.RunAttempt <= 0 || baseline.ArtifactID <= 0 ||
 		len(baseline.HeadSHA) != 40 || !isLowerHex(baseline.HeadSHA) ||
 		len(baseline.ArchiveSHA256) != 64 || !isLowerHex(baseline.ArchiveSHA256) ||
 		len(baseline.ContractSHA256) != 64 || !isLowerHex(baseline.ContractSHA256) ||
 		baseline.ExecutionCLI != "v0.9.2" || baseline.EnvironmentRevision == "" {
 		t.Fatalf("designated baseline reference has invalid identity or provenance: %s", refBytes)
+	}
+	archivePath := filepath.Join(root, filepath.FromSlash(baseline.ArchivePath))
+	archiveBytes, err := os.ReadFile(archivePath)
+	if err != nil {
+		t.Fatalf("read checked-in baseline archive: %v", err)
+	}
+	archiveDigest := sha256.Sum256(archiveBytes)
+	if hex.EncodeToString(archiveDigest[:]) != baseline.ArchiveSHA256 {
+		t.Fatal("checked-in baseline archive does not match its descriptor SHA-256")
 	}
 }
 

@@ -39,7 +39,6 @@ jobs:
       baseline_artifact_id: ${{ steps.baseline-resolution.outputs.baseline_artifact_id }}
       baseline_head_sha: ${{ steps.baseline-resolution.outputs.baseline_head_sha }}
     permissions:
-      actions: read
       contents: read
     if: >-
       ${{
@@ -186,7 +185,6 @@ jobs:
         id: baseline-resolution
         if: ${{ !cancelled() && steps.test.outputs.archive != '' }}
         env:
-          GH_TOKEN: ${{ github.token }}
           BTP_BENCHMARK_ENV_REVISION: ${{ vars.BTP_BENCHMARK_ENV_REVISION }}
         run: python3 benchmarks/btp/baseline-artifact.py resolve --reference benchmarks/btp/baseline-ref.json --workspace . --temp-dir "$RUNNER_TEMP"
 
