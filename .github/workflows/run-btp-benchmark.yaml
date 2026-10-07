@@ -186,7 +186,7 @@ jobs:
         if: ${{ !cancelled() && steps.test.outputs.archive != '' }}
         env:
           BTP_BENCHMARK_ENV_REVISION: ${{ vars.BTP_BENCHMARK_ENV_REVISION }}
-        run: python3 benchmarks/btp/baseline-artifact.py resolve --reference benchmarks/btp/baseline-ref.json --workspace . --temp-dir "$RUNNER_TEMP"
+        run: python3 benchmarks/btp/baseline-artifact.py resolve --reference benchmarks/btp/baseline-ref.json --workspace .
 
       - name: Install CLI for baseline preflight
         id: baseline-cli
