@@ -1,6 +1,8 @@
 package benchmarks
 
 import (
+	"encoding/hex"
+	"encoding/json"
 	"os"
 	"os/exec"
 	"path/filepath"
@@ -269,6 +271,11 @@ func TestBenchmarkPresentationContract(t *testing.T) {
 	}
 }
 
+func isLowerHex(s string) bool {
+	decoded, err := hex.DecodeString(s)
+	return err == nil && len(decoded)*2 == len(s) && s == strings.ToLower(s)
+}
+
 func TestBenchmarkWorkflowToolPins(t *testing.T) {
 	root := filepath.Join("..", "..")
 	content, err := os.ReadFile(filepath.Join(root, ".github/workflows/run-btp-benchmark.yaml"))
@@ -324,9 +331,36 @@ func TestBenchmarkWorkflowToolPins(t *testing.T) {
 	if !actionCheckout || !execution || !report || !k6Image || !modeOutput || !baselineWiring {
 		t.Fatalf("unexpected benchmark tool selection/report mode: checkout=%v execution-v0.9.2=%v report-v0.9.2=%v k6-image-v0.9.2=%v dynamic-mode-output=%v baseline-wiring=%v", actionCheckout, execution, report, k6Image, modeOutput, baselineWiring)
 	}
-	ref, err := os.ReadFile(filepath.Join(root, "benchmarks/btp/baseline-ref.json"))
-	if err != nil || strings.TrimSpace(string(ref)) != `{"schema_version":"v1","baseline":null}` {
-		t.Fatalf("initial baseline reference must remain explicitly disabled: err=%v value=%s", err, ref)
+	refBytes, err := os.ReadFile(filepath.Join(root, "benchmarks/btp/baseline-ref.json"))
+	if err != nil {
+		t.Fatalf("read designated baseline reference: %v", err)
+	}
+	var ref struct {
+		SchemaVersion string `json:"schema_version"`
+		Baseline      *struct {
+			RunID               int64  `json:"run_id"`
+			RunAttempt          int64  `json:"run_attempt"`
+			ArtifactID          int64  `json:"artifact_id"`
+			HeadSHA             string `json:"head_sha"`
+			ArchiveSHA256       string `json:"archive_sha256"`
+			ContractSHA256      string `json:"contract_sha256"`
+			ExecutionCLI        string `json:"execution_cli"`
+			EnvironmentRevision string `json:"environment_revision"`
+		} `json:"baseline"`
+	}
+	if err := json.Unmarshal(refBytes, &ref); err != nil {
+		t.Fatalf("parse designated baseline reference: %v", err)
+	}
+	if ref.SchemaVersion != "v1" || ref.Baseline == nil {
+		t.Fatalf("designated baseline reference must use schema v1 and configure a baseline: %s", refBytes)
+	}
+	baseline := ref.Baseline
+	if baseline.RunID <= 0 || baseline.RunAttempt <= 0 || baseline.ArtifactID <= 0 ||
+		len(baseline.HeadSHA) != 40 || !isLowerHex(baseline.HeadSHA) ||
+		len(baseline.ArchiveSHA256) != 64 || !isLowerHex(baseline.ArchiveSHA256) ||
+		len(baseline.ContractSHA256) != 64 || !isLowerHex(baseline.ContractSHA256) ||
+		baseline.ExecutionCLI != "v0.9.2" || baseline.EnvironmentRevision == "" {
+		t.Fatalf("designated baseline reference has invalid identity or provenance: %s", refBytes)
 	}
 }
 
