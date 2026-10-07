@@ -26,6 +26,15 @@ def descriptor():
     }}
 
 
+def local_descriptor(path, archive, contract_hash):
+    return {"schema_version": "v2", "baseline": {
+        "archive_path": path, "run_id": 123, "run_attempt": 2, "artifact_id": 456,
+        "artifact_expires_at": "2026-10-13T00:00:00Z", "head_sha": "a" * 40,
+        "archive_sha256": hashlib.sha256(archive).hexdigest(), "contract_sha256": contract_hash,
+        "execution_cli": "v0.9.2", "environment_revision": "dedicated-account-3",
+    }}
+
+
 def main():
     with tempfile.TemporaryDirectory() as td:
         root = Path(td)
@@ -191,6 +200,64 @@ def main():
             path.parent.mkdir(parents=True, exist_ok=True)
             path.write_bytes(name.encode())
         source = {name: (workspace / name).read_bytes() for name in module.CONTRACT_FILES}
+        contract_hash = module.contract_digest(source)
+        local_archive = workspace / "benchmarks/btp/baseline/btp-synthetic-benchmark.tsdb.tar.zst"
+        local_archive.parent.mkdir(parents=True)
+        local_bytes = b"reviewed synthetic baseline"
+        local_archive.write_bytes(local_bytes)
+        local_ref = root / "local-ref.json"
+        local_ref.write_text(json.dumps(local_descriptor("benchmarks/btp/baseline/btp-synthetic-benchmark.tsdb.tar.zst", local_bytes, contract_hash)))
+        local_args = Namespace(reference=local_ref, workspace=workspace, current_run_id="900", temp_dir=root,
+                               repository="", api_url="https://api.github.com")
+        local_output = root / "local-outputs"
+        with mock.patch.dict(os.environ, {"BTP_BENCHMARK_ENV_REVISION": "dedicated-account-3", "GITHUB_OUTPUT": str(local_output)}, clear=True):
+            assert module.resolve(local_args) == 0
+        local_values = dict(line.split("=", 1) for line in local_output.read_text().splitlines())
+        assert local_values["baseline_path"] == str(local_archive)
+        assert local_values["baseline_mode"] == "comparison" and local_values["baseline_run_id"] == "123"
+        assert not list(root.glob("btp-baseline-*"))
+
+        for unsafe_path in ("../outside.tsdb.tar.zst", "/tmp/outside.tsdb.tar.zst", "benchmarks\\escape.tsdb.tar.zst", "./archive.tsdb.tar.zst", "benchmarks//archive.tsdb.tar.zst"):
+            bad_ref = local_descriptor(unsafe_path, local_bytes, contract_hash)
+            local_ref.write_text(json.dumps(bad_ref))
+            try: module.strict_json(local_ref)
+            except module.Unavailable as error: assert error.reason == "invalid_reference"
+            else: raise AssertionError(f"unsafe local archive path accepted: {unsafe_path}")
+
+        good_ref = local_descriptor("benchmarks/btp/baseline/btp-synthetic-benchmark.tsdb.tar.zst", local_bytes, contract_hash)
+        def local_reason(ref, *, env="dedicated-account-3", current="900"):
+            local_ref.write_text(json.dumps(ref))
+            local_output.write_text("")
+            with mock.patch.dict(os.environ, {"BTP_BENCHMARK_ENV_REVISION": env, "GITHUB_OUTPUT": str(local_output)}, clear=True):
+                assert module.resolve(Namespace(reference=local_ref, workspace=workspace, current_run_id=current, temp_dir=root,
+                                                repository="", api_url="https://api.github.com")) == 0
+            return dict(line.split("=", 1) for line in local_output.read_text().splitlines())["baseline_reason"]
+
+        assert local_reason(good_ref, current="123") == "self_comparison"
+        assert local_reason(good_ref, env="wrong") == "environment_revision_mismatch"
+        changed_hash = dict(good_ref); changed_hash["baseline"] = dict(good_ref["baseline"], archive_sha256="b" * 64)
+        assert local_reason(changed_hash) == "invalid_archive"
+        changed_contract = dict(good_ref); changed_contract["baseline"] = dict(good_ref["baseline"], contract_sha256="c" * 64)
+        assert local_reason(changed_contract) == "incompatible_contract"
+        missing_ref = dict(good_ref); missing_ref["baseline"] = dict(good_ref["baseline"], archive_path="missing.tsdb.tar.zst")
+        assert local_reason(missing_ref) == "invalid_archive"
+        directory_ref = dict(good_ref); directory_ref["baseline"] = dict(good_ref["baseline"], archive_path="benchmarks/btp")
+        assert local_reason(directory_ref) == "invalid_archive"
+        local_archive.write_bytes(b"")
+        assert local_reason(good_ref) == "invalid_archive"
+        with local_archive.open("wb") as stream:
+            stream.truncate(module.MAX_LOCAL_ARCHIVE + 1)
+        assert local_reason(good_ref) == "invalid_archive"
+        local_archive.unlink()
+        local_archive.symlink_to(workspace / "benchmarks/btp/config.yaml")
+        assert local_reason(good_ref) == "invalid_archive"
+        local_archive.unlink()
+        local_archive.write_bytes(local_bytes)
+        local_archive.parent.joinpath("alias.tsdb.tar.zst").symlink_to(local_archive)
+        alias_ref = dict(good_ref); alias_ref["baseline"] = dict(good_ref["baseline"], archive_path="benchmarks/btp/baseline/alias.tsdb.tar.zst")
+        assert local_reason(alias_ref) == "invalid_archive"
+        local_archive.parent.joinpath("alias.tsdb.tar.zst").unlink()
+
         archive_bytes = b"private synthetic archive"
         archive_zip = root / "synthetic.zip"
         with zipfile.ZipFile(archive_zip, "w") as archive:
