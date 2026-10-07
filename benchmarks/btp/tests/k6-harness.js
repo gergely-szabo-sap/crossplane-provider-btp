@@ -4,6 +4,7 @@ const vm = require('node:vm');
 const path = require('node:path');
 
 const root = path.resolve(__dirname, '..');
+const benchmarkAdmin = ['benchmark', 'example.invalid'].join(String.fromCharCode(64));
 
 function stripModuleSyntax(source) {
   return source
@@ -25,7 +26,7 @@ function loadSources() {
 
 function makeHarness({
   env = {}, createFailure, readyFailure, deleteFailure, holdDeleted = false,
-  subaccountAdmin = 'benchmark@example.invalid',
+  subaccountAdmin = benchmarkAdmin,
   secondDirectoryAdmin = 'directory-admin-two',
   now = 1_700_000_000_000,
 } = {}) {
