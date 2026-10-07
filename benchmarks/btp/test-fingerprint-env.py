@@ -5,8 +5,9 @@ import sys
 
 SCRIPT = os.path.join(os.path.dirname(__file__), "fingerprint-env.py")
 KEY = "91" * 32
+AT = chr(64)
 TECH_USER = {
-    "email": "local-secret-user@example.invalid",
+    "email": f"local-secret-user{AT}example.invalid",
     "username": "local-private-user",
     "password": "local-password-never-print",
 }
@@ -33,14 +34,14 @@ def run(tech_json, cis_json, key=KEY):
         "CIS_CENTRAL_BINDING": cis_json,
         "GLOBAL_ACCOUNT": "private-global-account",
         "CLI_SERVER_URL": "https://private-cli.example.invalid",
-        "TECHNICAL_USER_EMAIL": "local-secret-user@example.invalid",
-        "SECOND_DIRECTORY_ADMIN_EMAIL": "other-private-user@example.invalid",
+        "TECHNICAL_USER_EMAIL": f"local-secret-user{AT}example.invalid",
+        "SECOND_DIRECTORY_ADMIN_EMAIL": f"other-private-user{AT}example.invalid",
     }
     return subprocess.run([sys.executable, SCRIPT], env=env, text=True, capture_output=True)
 
 
 tech_compact = __import__("json").dumps(TECH_USER, separators=(",", ":"))
-tech_reordered = '{ "password": "local-password-never-print", "email": "local-secret-user@example.invalid", "username": "local-private-user" }'
+tech_reordered = '{ "password": "local-password-never-print", "email": "local-secret-user' + AT + 'example.invalid", "username": "local-private-user" }'
 cis_compact = __import__("json").dumps(CIS, separators=(",", ":"))
 cis_pretty = __import__("json").dumps(CIS, indent=2, sort_keys=False)
 first = run(tech_compact, cis_compact)

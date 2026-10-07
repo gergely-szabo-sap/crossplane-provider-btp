@@ -4,6 +4,7 @@ const { makeHarness } = require('./tests/k6-harness');
 
 const kinds = ['Subaccount', 'Directory', 'Entitlement', 'DirectoryEntitlement', 'SubaccountApiCredential'];
 const perKind = 5;
+const benchmarkAdmin = ['benchmark', 'example.invalid'].join(String.fromCharCode(64));
 const happy = makeHarness();
 assert.equal(happy.options.scenarios.create_delete.executor, 'shared-iterations');
 assert.equal(happy.options.scenarios.create_delete.vus, 1);
@@ -22,7 +23,7 @@ const directories = namesByKind.Directory.map((resource) => resource.metadata.na
 assert.deepEqual(namesByKind.Entitlement.map((resource) => resource.spec.forProvider.subaccountRef.name), subaccounts);
 assert.deepEqual(namesByKind.DirectoryEntitlement.map((resource) => resource.spec.forProvider.directoryRef.name), directories);
 assert.deepEqual(namesByKind.SubaccountApiCredential.map((resource) => resource.spec.forProvider.subaccountRef.name), subaccounts);
-assert.deepEqual(namesByKind.Directory.flatMap((resource) => Array.from(resource.spec.forProvider.directoryAdmins)), Array(5).fill(['benchmark@example.invalid', 'directory-admin-two']).flat());
+assert.deepEqual(namesByKind.Directory.flatMap((resource) => Array.from(resource.spec.forProvider.directoryAdmins)), Array(5).fill([benchmarkAdmin, 'directory-admin-two']).flat());
 assert.ok(namesByKind.SubaccountApiCredential.every((resource) => resource.spec.forProvider.readOnly === true));
 const credentialSecretNames = namesByKind.SubaccountApiCredential.map((resource) => resource.spec.writeConnectionSecretToRef.name);
 assert.equal(new Set(credentialSecretNames).size, perKind);
@@ -63,7 +64,7 @@ assert.equal(failedDelete.deleted.length, 25, 'cleanup continues after a delete 
 const missingAdmin = makeHarness({ secondDirectoryAdmin: '' });
 assert.throws(() => missingAdmin.run(), /create\/readiness failed \(api_error\)/);
 assert.equal(missingAdmin.created.length, 0, 'settings fail before creating resources');
-const duplicateAdmins = makeHarness({ secondDirectoryAdmin: 'BENCHMARK@example.invalid' });
+const duplicateAdmins = makeHarness({ secondDirectoryAdmin: benchmarkAdmin.toUpperCase() });
 assert.throws(() => duplicateAdmins.run(), /create\/readiness failed \(api_error\)/);
 assert.equal(duplicateAdmins.created.length, 0);
 

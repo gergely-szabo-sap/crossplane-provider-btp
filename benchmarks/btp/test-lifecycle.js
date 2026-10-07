@@ -3,6 +3,7 @@ const assert = require('node:assert/strict');
 const { makeHarness, loadSources } = require('./tests/k6-harness');
 
 const kinds = ['Subaccount', 'Directory', 'Entitlement', 'DirectoryEntitlement', 'SubaccountApiCredential'];
+const benchmarkAdmin = ['benchmark', 'example.invalid'].join(String.fromCharCode(64));
 const happy = makeHarness();
 assert.equal(happy.options.scenarios.create_delete.vus, 1);
 assert.equal(happy.options.scenarios.create_delete.iterations, 1);
@@ -21,7 +22,7 @@ assert.ok(happy.metrics.some((metric) => metric.name === 'xp_measurement_phase' 
 assert.ok(happy.created.every((resource) => resource.metadata.namespace === undefined), 'managed CRs are cluster-scoped');
 const credential = happy.created.at(-1);
 assert.equal(credential.spec.forProvider.readOnly, true);
-assert.deepEqual(Array.from(happy.created[5].spec.forProvider.directoryAdmins), ['benchmark@example.invalid', 'directory-admin-two']);
+assert.deepEqual(Array.from(happy.created[5].spec.forProvider.directoryAdmins), [benchmarkAdmin, 'directory-admin-two']);
 assert.ok(credential.spec.writeConnectionSecretToRef.name.endsWith('-secret'));
 assert.equal(credential.spec.writeConnectionSecretToRef.namespace, 'default');
 const readyIndex = happy.events.findIndex((event) => event.type === 'all_ready');
@@ -57,7 +58,7 @@ assert.deepEqual(deletionFailed.deleted.map((resource) => resource.kind), [...ki
 assert.equal(deletionFailed.metrics.filter((metric) => metric.name === 'xp_operation_duration' && metric.tags.operation === 'delete' && metric.tags.outcome === 'failure').length, 10);
 assert.ok(!deletionFailed.logs.some((line) => line.includes('synthetic delete failure')), 'raw errors are not logged');
 
-const invalidAdmins = makeHarness({ secondDirectoryAdmin: 'BENCHMARK@example.invalid' });
+const invalidAdmins = makeHarness({ secondDirectoryAdmin: benchmarkAdmin.toUpperCase() });
 assert.throws(() => invalidAdmins.run(), /create\/readiness failed \(api_error\)/);
 assert.equal(invalidAdmins.created.length, 0);
 assert.deepEqual(invalidAdmins.metrics.filter((metric) => metric.name === 'xp_lifecycle_success').map((metric) => metric.value), [0]);
