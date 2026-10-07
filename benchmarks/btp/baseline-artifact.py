@@ -88,12 +88,19 @@ def contract_digest(contents: dict[str, bytes]) -> str:
 
 
 class HTTPSNoAuthRedirect(urllib.request.HTTPRedirectHandler):
-    """Follow only HTTPS redirects and never carry caller credentials along."""
+    """Follow HTTPS redirects without forwarding headers across origins."""
     def redirect_request(self, request, fp, code, msg, headers, newurl):
-        if urllib.parse.urlsplit(newurl).scheme != "https":
+        source = urllib.parse.urlsplit(request.full_url)
+        target = urllib.parse.urlsplit(newurl)
+        if target.scheme != "https":
             raise Unavailable("download_unavailable")
-        safe_headers = {key: value for key, value in request.header_items()
-                        if key.lower() not in {"authorization", "proxy-authorization", "cookie"}}
+
+        same_origin = (source.scheme.lower(), source.hostname, source.port) == (
+            target.scheme.lower(), target.hostname, target.port)
+        safe_headers = {}
+        if same_origin:
+            safe_headers = {key: value for key, value in request.header_items()
+                            if key.lower() not in {"authorization", "proxy-authorization", "cookie"}}
         return urllib.request.Request(newurl, headers=safe_headers, method="GET")
 
 

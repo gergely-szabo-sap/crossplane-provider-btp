@@ -92,10 +92,14 @@ def main():
 
     redirect = module.HTTPSNoAuthRedirect()
     authenticated = __import__("urllib.request", fromlist=["Request"]).Request(
-        "https://api.github.com/artifact", headers={"Authorization": "Bearer secret", "Cookie": "private", "Accept": "application/zip"})
+        "https://api.github.com/artifact", headers={"Authorization": "Bearer secret", "Cookie": "private",
+                                                       "Accept": "application/zip", "X-GitHub-Api-Version": "2022-11-28"})
     redirected = redirect.redirect_request(authenticated, None, 302, "Found", {}, "https://artifact.example/signed")
-    assert redirected.get_header("Authorization") is None and redirected.get_header("Cookie") is None
-    assert redirected.get_header("Accept") == "application/zip"
+    assert redirected.header_items() == []
+    same_origin = redirect.redirect_request(authenticated, None, 302, "Found", {}, "https://api.github.com/artifact/next")
+    assert same_origin.get_header("Authorization") is None and same_origin.get_header("Cookie") is None
+    assert same_origin.get_header("Accept") == "application/zip"
+    assert same_origin.get_header("X-github-api-version") == "2022-11-28"
     try: redirect.redirect_request(authenticated, None, 302, "Found", {}, "http://artifact.example/file")
     except module.Unavailable: pass
     else: raise AssertionError("insecure artifact redirect accepted")
