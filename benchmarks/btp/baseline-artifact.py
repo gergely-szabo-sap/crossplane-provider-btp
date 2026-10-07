@@ -25,6 +25,7 @@ WORKFLOW = ".github/workflows/run-btp-benchmark.yaml"
 ARTIFACT_PREFIX = "btp-synthetic-benchmark-metrics-"
 MAX_JSON = 1 << 20
 MAX_ARCHIVE = 1 << 30
+MAX_LOCAL_ARCHIVE = 50 * 1024 * 1024
 MAX_ZIP = 1 << 30
 CONTRACT_FILES = (
     "benchmarks/btp/config.yaml",
@@ -34,6 +35,7 @@ CONTRACT_FILES = (
     "benchmarks/btp/report-presentation.yaml",
 )
 FIELDS = {"run_id", "run_attempt", "artifact_id", "head_sha", "archive_sha256", "contract_sha256", "execution_cli", "environment_revision"}
+LOCAL_FIELDS = {"archive_path", "run_id", "run_attempt", "artifact_id", "artifact_expires_at", "head_sha", "archive_sha256", "contract_sha256", "execution_cli", "environment_revision"}
 REASONS = {"not_configured", "expired", "not_found", "access_denied", "download_unavailable", "invalid_reference", "invalid_archive", "incompatible_contract", "environment_revision_mismatch", "self_comparison", "identity_unavailable", "unsuitable_evidence"}
 
 class Unavailable(Exception):
@@ -59,12 +61,14 @@ def strict_json(path: Path) -> dict:
         value = json.loads(path.read_text(encoding="utf-8"), object_pairs_hook=pairs)
     except (OSError, UnicodeError, ValueError, json.JSONDecodeError):
         raise Unavailable("invalid_reference")
-    if not isinstance(value, dict) or set(value) != {"schema_version", "baseline"} or value["schema_version"] != "v1":
+    if (not isinstance(value, dict) or set(value) != {"schema_version", "baseline"} or
+        not isinstance(value["schema_version"], str) or value["schema_version"] not in {"v1", "v2"}):
         raise Unavailable("invalid_reference")
+    version = value["schema_version"]
     ref = value["baseline"]
     if ref is None:
         raise Unavailable("not_configured")
-    if not isinstance(ref, dict) or set(ref) != FIELDS:
+    if not isinstance(ref, dict) or set(ref) != (LOCAL_FIELDS if version == "v2" else FIELDS):
         raise Unavailable("invalid_reference")
     for key in ("run_id", "run_attempt", "artifact_id"):
         if type(ref[key]) is not int or ref[key] <= 0:
@@ -74,6 +78,18 @@ def strict_json(path: Path) -> dict:
             raise Unavailable("invalid_reference")
     if ref["execution_cli"] != EXECUTION_CLI or not isinstance(ref["environment_revision"], str) or not re.fullmatch(r"[A-Za-z0-9][A-Za-z0-9._-]{0,63}", ref["environment_revision"]):
         raise Unavailable("invalid_reference")
+    if version == "v2":
+        if (not isinstance(ref["artifact_expires_at"], str) or
+            not re.fullmatch(r"[0-9TZ:.-]{1,40}", ref["artifact_expires_at"]) or
+            not isinstance(ref["archive_path"], str) or "\\" in ref["archive_path"]):
+            raise Unavailable("invalid_reference")
+        path = PurePosixPath(ref["archive_path"])
+        if (path.is_absolute() or not path.parts or str(path) != ref["archive_path"] or
+            any(part in {"", ".", ".."} for part in path.parts)):
+            raise Unavailable("invalid_reference")
+        ref["_schema_version"] = version
+    else:
+        ref["_schema_version"] = version
     return ref
 
 
@@ -258,10 +274,49 @@ def setup_private(parent: Path) -> Path:
     return path
 
 
+def resolve_local(ref: dict, workspace: Path, current_run_id: str) -> int:
+    if current_run_id and ref["run_id"] == int(current_run_id):
+        raise Unavailable("self_comparison")
+    env_revision = os.environ.get("BTP_BENCHMARK_ENV_REVISION", "")
+    if not env_revision or env_revision != ref["environment_revision"]:
+        raise Unavailable("environment_revision_mismatch")
+    root = workspace.resolve(strict=True)
+    candidate = root
+    for part in PurePosixPath(ref["archive_path"]).parts:
+        candidate = candidate / part
+        try:
+            info = candidate.lstat()
+        except FileNotFoundError:
+            raise Unavailable("invalid_archive")
+        if stat.S_ISLNK(info.st_mode):
+            raise Unavailable("invalid_archive")
+    resolved = candidate.resolve(strict=True)
+    if not resolved.is_relative_to(root) or not stat.S_ISREG(candidate.stat().st_mode):
+        raise Unavailable("invalid_archive")
+    size = candidate.stat().st_size
+    if size <= 0 or size > MAX_LOCAL_ARCHIVE:
+        raise Unavailable("invalid_archive")
+    if file_digest(candidate) != ref["archive_sha256"]:
+        raise Unavailable("invalid_archive")
+    current = {name: (root / name).read_bytes() for name in CONTRACT_FILES}
+    if contract_digest(current) != ref["contract_sha256"]:
+        raise Unavailable("incompatible_contract")
+    provenance = (f"run={ref['run_id']};attempt={ref['run_attempt']};sha={ref['head_sha']};"
+                  f"artifact={ref['artifact_id']};expires={ref['artifact_expires_at']}")
+    output({"baseline_path": str(candidate), "baseline_mode": "comparison", "baseline_reason": "",
+            "baseline_provenance": provenance, "baseline_run_id": str(ref["run_id"]),
+            "baseline_attempt": str(ref["run_attempt"]), "baseline_artifact_id": str(ref["artifact_id"]),
+            "baseline_head_sha": ref["head_sha"]})
+    print("Checked-in benchmark baseline resolved and verified.")
+    return 0
+
+
 def resolve(args) -> int:
     private = None
     try:
         ref = strict_json(args.reference)
+        if ref["_schema_version"] == "v2":
+            return resolve_local(ref, args.workspace, args.current_run_id)
         if args.current_run_id and ref["run_id"] == int(args.current_run_id): raise Unavailable("self_comparison")
         env_revision = os.environ.get("BTP_BENCHMARK_ENV_REVISION", "")
         if not env_revision or env_revision != ref["environment_revision"]: raise Unavailable("environment_revision_mismatch")
