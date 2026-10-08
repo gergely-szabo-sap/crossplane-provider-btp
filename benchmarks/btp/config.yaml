@@ -1,0 +1,87 @@
+# Report-only BTP benchmark. Creates five serial, coexisting sets (25 managed resources).
+environments:
+  local:
+    type: kind
+    kind:
+      cluster_name: xp-btp-benchmark
+      node_image: kindest/node:v1.30.2
+      nodes: 1
+
+crossplane:
+  environment: local
+  version: "2.1.8"
+  namespace: crossplane-system
+
+provider:
+  rbac:
+    mode: managed-cluster-admin
+  environment: local
+  package: provider:v0
+  config_crd: providerconfigs.btp.sap.crossplane.io
+  local_artifact:
+    archive: ${XP_DIADROMOS_RUN_TEST_PROVIDER_ARTIFACT}
+  credentials:
+    credentials: ${BTP_TECHNICAL_USER}
+    data: ${CIS_CENTRAL_BINDING}
+  config: |
+    apiVersion: btp.sap.crossplane.io/v1alpha1
+    kind: ProviderConfig
+    metadata:
+      name: default
+    spec:
+      globalAccount: ${GLOBAL_ACCOUNT}
+      cliServerUrl: ${CLI_SERVER_URL}
+      serviceAccountSecret:
+        source: Secret
+        secretRef:
+          namespace: default
+          name: xp-diadromos-credentials
+          key: credentials
+      cisCredentials:
+        source: Secret
+        secretRef:
+          namespace: default
+          name: xp-diadromos-credentials
+          key: data
+
+k6:
+  environment: local
+  rbac:
+    mode: managed-cluster-admin
+    service_account_name: xp-diadromos-runner
+  test_script: ./benchmarks/btp/k6/subaccount-create-delete.js
+  helpers_path: ./benchmarks/btp/k6/crossplane-helpers.js
+  custom_image: ghcr.io/gergely-szabo-sap/xp-diadromos-k6:v0.9.4
+  load_image: true
+  parallelism: 1
+  wait_timeout: 2h
+  env:
+    XP_DIADROMOS_BTP_READY_TIMEOUT: "600"
+    XP_DIADROMOS_BTP_DELETE_TIMEOUT: "600"
+    XP_DIADROMOS_BTP_CREATE_BUDGET: "2700"
+    XP_DIADROMOS_BTP_CLEANUP_BUDGET: "3000"
+    XP_DIADROMOS_BTP_RUN_ID: "${GITHUB_RUN_ID}"
+    XP_DIADROMOS_BTP_RUN_ATTEMPT: "${GITHUB_RUN_ATTEMPT}"
+    XP_DIADROMOS_BTP_REGION: eu10
+    XP_DIADROMOS_BTP_SUBACCOUNT_ADMIN: ${TECHNICAL_USER_EMAIL}
+    XP_DIADROMOS_BTP_SECOND_DIRECTORY_ADMIN: ${SECOND_DIRECTORY_ADMIN_EMAIL}
+
+metrics:
+  environment: local
+  dashboard: ./perses/overview.yaml
+  sample_interval: 10s
+  namespaces:
+    - crossplane-system
+  prometheus:
+    port: 8080
+    path: /metrics
+    scrape_interval: 10s
+    scrape_timeout: 5s
+    max_response_size: 32MiB
+  archive:
+    name_prefix: btp-multi-resource-ci
+    max_size: 1GiB
+    drop_labels: []
+    k6_bucket_interval: 1s
+output:
+  directory: ./results
