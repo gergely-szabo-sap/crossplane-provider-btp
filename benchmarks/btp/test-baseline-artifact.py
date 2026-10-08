@@ -18,11 +18,11 @@ SPEC.loader.exec_module(module)
 
 
 def descriptor(archive_path, archive, contract_hash):
-    return {"schema_version": "v2", "baseline": {
+    return {"schema_version": "v3", "baseline": {
         "archive_path": archive_path, "run_id": 123, "run_attempt": 2, "artifact_id": 456,
         "artifact_expires_at": "2026-10-13T00:00:00Z", "head_sha": "a" * 40,
         "archive_sha256": hashlib.sha256(archive).hexdigest(), "contract_sha256": contract_hash,
-        "execution_cli": "v0.9.2", "environment_revision": "dedicated-account-3",
+        "validated_cli": "v0.9.4", "environment_revision": "dedicated-account-3",
     }}
 
 
@@ -65,9 +65,9 @@ def main():
         assert invoke(expired_provenance)["baseline_mode"] == "comparison"
 
         for malformed in (
-            '{"schema_version":"v2","schema_version":"v2","baseline":null}',
-            json.dumps({"schema_version": "v1", "baseline": good["baseline"]}),
-            json.dumps({"schema_version": "v2", "baseline": {**good["baseline"], "extra": True}}),
+            '{"schema_version":"v3","schema_version":"v3","baseline":null}',
+            json.dumps({"schema_version": "v2", "baseline": good["baseline"]}),
+            json.dumps({"schema_version": "v3", "baseline": {**good["baseline"], "extra": True}}),
         ):
             reference.write_text(malformed)
             try:
@@ -77,7 +77,7 @@ def main():
             else:
                 raise AssertionError("invalid or legacy descriptor was accepted")
 
-        null_ref = {"schema_version": "v2", "baseline": None}
+        null_ref = {"schema_version": "v3", "baseline": None}
         assert invoke(null_ref)["baseline_reason"] == "not_configured"
         assert invoke(good, current="123")["baseline_reason"] == "self_comparison"
         assert invoke(good, env_revision="wrong")["baseline_reason"] == "environment_revision_mismatch"
@@ -102,6 +102,34 @@ def main():
         changed_contract = json.loads(json.dumps(good))
         changed_contract["baseline"]["contract_sha256"] = "c" * 64
         assert invoke(changed_contract)["baseline_reason"] == "incompatible_contract"
+
+        wrong_validation_release = json.loads(json.dumps(good))
+        wrong_validation_release["baseline"]["validated_cli"] = "v9.9.9"
+        reference.write_text(json.dumps(wrong_validation_release))
+        try:
+            module.strict_json(reference)
+        except module.Unavailable as error:
+            assert error.reason == "invalid_reference"
+        else:
+            raise AssertionError("baseline validated by an unselected CLI was accepted")
+
+        legacy_shape = json.loads(json.dumps(good))
+        legacy_shape["schema_version"] = "v2"
+        legacy_shape["baseline"]["execution_cli"] = legacy_shape["baseline"].pop("validated_cli")
+        reference.write_text(json.dumps(legacy_shape))
+        try:
+            module.strict_json(reference)
+        except module.Unavailable as error:
+            assert error.reason == "invalid_reference"
+        else:
+            raise AssertionError("legacy baseline shape was accepted")
+
+        for name in module.CONTRACT_FILES:
+            path = workspace / name
+            original = path.read_bytes()
+            path.write_bytes(original + b" changed")
+            assert invoke(good)["baseline_reason"] == "incompatible_contract", name
+            path.write_bytes(original)
 
         archive.unlink()
         assert invoke(good)["baseline_reason"] == "invalid_archive"

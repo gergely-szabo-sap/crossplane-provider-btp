@@ -290,22 +290,25 @@ func TestBenchmarkWorkflowToolPins(t *testing.T) {
 				Name string            `yaml:"name"`
 				Uses string            `yaml:"uses"`
 				With map[string]string `yaml:"with"`
+				Env  map[string]string `yaml:"env"`
 			} `yaml:"steps"`
 		} `yaml:"jobs"`
 	}
 	if err := yaml.Unmarshal(content, &workflow); err != nil {
 		t.Fatalf("parse benchmark workflow: %v", err)
 	}
-	var actionCheckout, execution, report bool
+	var actionCheckout, execution, report, preflight bool
 	for _, step := range workflow.Jobs["benchmark"].Steps {
 		switch {
 		case step.Name == "Check out pinned xp-diadromos actions":
 			actionCheckout = step.With["repository"] == "gergely-szabo-sap/xp-diadromos" &&
-				step.With["ref"] == "986f84848429e28ee64db70af976c6d2a9472b4e"
+				step.With["ref"] == "16fe4521237bd8217475b418a4e5f7c25b4c9598"
 		case strings.HasSuffix(step.Uses, "/run-test"):
-			execution = step.With["version"] == "v0.9.2"
+			execution = step.With["version"] == "v0.9.4"
 		case strings.HasSuffix(step.Uses, "/metrics-ci-report"):
-			report = step.With["version"] == "v0.9.2" && step.With["input"] == "${{ steps.test.outputs.archive }}"
+			report = step.With["version"] == "v0.9.4" && step.With["input"] == "${{ steps.test.outputs.archive }}"
+		case step.Name == "Install CLI for baseline preflight":
+			preflight = step.Env["XP_METRICS_CI_VERSION"] == "v0.9.4"
 		}
 	}
 	configBytes, err := os.ReadFile(filepath.Join(root, "benchmarks/btp/config.yaml"))
@@ -320,7 +323,7 @@ func TestBenchmarkWorkflowToolPins(t *testing.T) {
 	if err := yaml.Unmarshal(configBytes, &config); err != nil {
 		t.Fatalf("parse benchmark config: %v", err)
 	}
-	k6Image := config.K6.CustomImage == "ghcr.io/gergely-szabo-sap/xp-diadromos-k6:v0.9.2"
+	k6Image := config.K6.CustomImage == "ghcr.io/gergely-szabo-sap/xp-diadromos-k6:v0.9.4"
 	modeOutput := strings.Contains(workflow.Jobs["benchmark"].Outputs["report_mode"], "baseline-validation") &&
 		strings.Contains(workflow.Jobs["benchmark"].Outputs["report_mode"], "current-only")
 	workflowText := string(content)
@@ -329,8 +332,8 @@ func TestBenchmarkWorkflowToolPins(t *testing.T) {
 		strings.Contains(workflowText, "baseline-artifact.py validate") &&
 		strings.Contains(workflowText, "baseline: ${{ steps.baseline-validation.outputs.baseline_path }}") &&
 		strings.Contains(workflowText, "baseline-ref.json")
-	if !actionCheckout || !execution || !report || !k6Image || !modeOutput || !baselineWiring {
-		t.Fatalf("unexpected benchmark tool selection/report mode: checkout=%v execution-v0.9.2=%v report-v0.9.2=%v k6-image-v0.9.2=%v dynamic-mode-output=%v baseline-wiring=%v", actionCheckout, execution, report, k6Image, modeOutput, baselineWiring)
+	if !actionCheckout || !execution || !report || !preflight || !k6Image || !modeOutput || !baselineWiring {
+		t.Fatalf("unexpected benchmark tool selection/report mode: checkout=%v execution=%v report=%v preflight=%v k6-image=%v dynamic-mode-output=%v baseline-wiring=%v", actionCheckout, execution, report, preflight, k6Image, modeOutput, baselineWiring)
 	}
 	refBytes, err := os.ReadFile(filepath.Join(root, "benchmarks/btp/baseline-ref.json"))
 	if err != nil {
@@ -347,23 +350,24 @@ func TestBenchmarkWorkflowToolPins(t *testing.T) {
 			HeadSHA             string `json:"head_sha"`
 			ArchiveSHA256       string `json:"archive_sha256"`
 			ContractSHA256      string `json:"contract_sha256"`
-			ExecutionCLI        string `json:"execution_cli"`
+			ValidatedCLI        string `json:"validated_cli"`
 			EnvironmentRevision string `json:"environment_revision"`
 		} `json:"baseline"`
 	}
 	if err := json.Unmarshal(refBytes, &ref); err != nil {
 		t.Fatalf("parse designated baseline reference: %v", err)
 	}
-	if ref.SchemaVersion != "v2" || ref.Baseline == nil {
-		t.Fatalf("designated baseline reference must use schema v2 and configure a baseline: %s", refBytes)
+	if ref.SchemaVersion != "v3" || ref.Baseline == nil {
+		t.Fatalf("designated baseline reference must use schema v3 and configure a baseline: %s", refBytes)
 	}
 	baseline := ref.Baseline
 	if baseline.ArchivePath != "benchmarks/btp/baseline/btp-synthetic-benchmark.tsdb.tar.zst" ||
-		baseline.ArtifactExpiresAt == "" || baseline.RunID <= 0 || baseline.RunAttempt <= 0 || baseline.ArtifactID <= 0 ||
+		baseline.ArtifactExpiresAt != "2026-10-14T08:54:38Z" || baseline.RunID != 37594310305 || baseline.RunAttempt != 1 || baseline.ArtifactID != 11470154615 ||
+		baseline.HeadSHA != "6b148994589053b96ec719a7821cc6f73f55bf75" || baseline.EnvironmentRevision != "btp-benchmark-env-v1" ||
 		len(baseline.HeadSHA) != 40 || !isLowerHex(baseline.HeadSHA) ||
 		len(baseline.ArchiveSHA256) != 64 || !isLowerHex(baseline.ArchiveSHA256) ||
 		len(baseline.ContractSHA256) != 64 || !isLowerHex(baseline.ContractSHA256) ||
-		baseline.ExecutionCLI != "v0.9.2" || baseline.EnvironmentRevision == "" {
+		baseline.ValidatedCLI != "v0.9.4" || baseline.EnvironmentRevision == "" {
 		t.Fatalf("designated baseline reference has invalid identity or provenance: %s", refBytes)
 	}
 	archivePath := filepath.Join(root, filepath.FromSlash(baseline.ArchivePath))
