@@ -241,6 +241,9 @@ func TestBenchmarkPresentationContract(t *testing.T) {
 		if i < 4 && row.DisplayUnit == "" {
 			t.Errorf("CPU/memory row %s lost its supported display_unit", row.ID)
 		}
+		if row.Unit == "ms" && row.DisplayUnit != "duration" {
+			t.Errorf("duration row %s lacks human-readable display_unit", row.ID)
+		}
 		if row.Source == "raw_k6" && (row.Metric == "xp_time_to_ready" || row.Metric == "xp_time_to_delete") && row.Match["scenario"] != "create_delete" {
 			t.Errorf("lifecycle row %s lacks create_delete match", row.ID)
 		}
@@ -263,11 +266,11 @@ func TestBenchmarkPresentationContract(t *testing.T) {
 	}
 	for i, kind := range kinds {
 		mean, median := presentation.Measurements[5+i*3], presentation.Measurements[6+i*3]
-		if mean.Match["resource_kind"] != kind || median.Match["resource_kind"] != kind || median.Statistic != "p50" || mean.Unit != "ms" || median.Unit != "ms" {
+		if mean.Match["resource_kind"] != kind || median.Match["resource_kind"] != kind || median.Statistic != "p50" || mean.Unit != "ms" || median.Unit != "ms" || mean.DisplayUnit != "duration" || median.DisplayUnit != "duration" {
 			t.Errorf("readiness mean/median pairing incorrect for %s", kind)
 		}
 	}
-	if row := presentation.Measurements[4]; row.ID != "iteration-duration-mean" || row.Source != "raw_k6" || row.Metric != "iteration_duration" || row.Match["scenario"] != "create_delete" || row.Statistic != "mean" || row.Unit != "ms" {
+	if row := presentation.Measurements[4]; row.ID != "iteration-duration-mean" || row.Source != "raw_k6" || row.Metric != "iteration_duration" || row.Match["scenario"] != "create_delete" || row.Statistic != "mean" || row.Unit != "ms" || row.DisplayUnit != "duration" {
 		t.Errorf("invalid complete-iteration duration row: %#v", row)
 	}
 }
@@ -448,7 +451,8 @@ func TestBenchmarkCommentSanitizerInlineStep(t *testing.T) {
 	}
 	safe := string(fixture)
 	result := invoke(t, safe, false, true)
-	if !strings.Contains(result, "| Mean time until Subaccount is Ready (client-observed) | 500 ms |") ||
+	if !strings.Contains(result, "| Complete lifecycle iteration duration | 19.5 min |") ||
+		!strings.Contains(result, "| Mean time until Subaccount is Ready (client-observed) | 500 ms |") ||
 		!strings.Contains(result, "| Mean time until Subaccount Kubernetes object is absent (client-observed) | 250 ms |") ||
 		strings.Count(result, "\n") != 30 {
 		t.Fatalf("renderer-compatible table was not normalized as expected: %q", result)
@@ -461,6 +465,7 @@ func TestBenchmarkCommentSanitizerInlineStep(t *testing.T) {
 	}
 	comparison := invoke(t, string(comparisonFixture), false, true)
 	for _, expected := range []string{
+		"| Complete lifecycle iteration duration | 19.5 min | 20 min | +2.9% |",
 		"| Mean time until Subaccount is Ready (client-observed) | 500 ms | 510 ms | +2.0% |",
 		"| Provider container maximum sampled CPU usage | 250 millicores | 250 millicores | +0.0% |",
 		"| Subaccount observed reconciliation errors | 0 count | 1 count | Unavailable — percentage change requires a strictly positive baseline |",

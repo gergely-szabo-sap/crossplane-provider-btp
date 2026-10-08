@@ -213,7 +213,7 @@ def report_rows(markdown: str, comparison: bool) -> list[list[str]]:
         cells[0] = cells[0].replace(r"\(", "(").replace(r"\)", ")")
         if not re.fullmatch(r"[A-Za-z][A-Za-z0-9 ()-]{0,119}", cells[0]):
             fail("CI Markdown contains an unexpected measurement label")
-        value_pattern = re.compile(r"(?:-?(?:[0-9]{1,3}(?:,[0-9]{3})+|[0-9]+)(?:[.][0-9]+)?(?:[eE][+-]?[0-9]+)?(?: (?:ms|count|cores|bytes|millicores|MiB))?|n/a|unavailable|Unavailable — [A-Za-z0-9 ,.;:-]{1,200})\Z", re.IGNORECASE)
+        value_pattern = re.compile(r"(?:-?(?:[0-9]{1,3}(?:,[0-9]{3})+|[0-9]+)(?:[.][0-9]+)?(?:[eE][+-]?[0-9]+)?(?: (?:ms|s|min|count|cores|bytes|millicores|MiB))?|n/a|unavailable|Unavailable — [A-Za-z0-9 ,.;:-]{1,200})\Z", re.IGNORECASE)
         if comparison:
             change_pattern = re.compile(
                 r"(?:[+-]?[0-9]+[.][0-9]%|n/a|unavailable|Unavailable — (?:baseline|current): [A-Za-z0-9 ,.;:_-]{1,180})\Z",
