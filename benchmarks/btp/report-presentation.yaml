@@ -52,6 +52,7 @@ measurements:
       scenario: create_delete
     statistic: mean
     unit: ms
+    display_unit: duration
   - id: subaccount-ready-mean
     label: Mean time until Subaccount is Ready (client-observed)
     source: raw_k6
@@ -61,6 +62,7 @@ measurements:
       scenario: create_delete
     statistic: mean
     unit: ms
+    display_unit: duration
   - id: subaccount-ready-p50
     label: Median client-observed Subaccount readiness
     source: raw_k6
@@ -70,6 +72,7 @@ measurements:
       scenario: create_delete
     statistic: p50
     unit: ms
+    display_unit: duration
   - id: subaccount-delete-mean
     label: Mean time until Subaccount Kubernetes object is absent (client-observed)
     source: raw_k6
@@ -79,6 +82,7 @@ measurements:
       scenario: create_delete
     statistic: mean
     unit: ms
+    display_unit: duration
   - id: directory-ready-mean
     label: Mean time until Directory is Ready (client-observed)
     source: raw_k6
@@ -88,6 +92,7 @@ measurements:
       scenario: create_delete
     statistic: mean
     unit: ms
+    display_unit: duration
   - id: directory-ready-p50
     label: Median client-observed Directory readiness
     source: raw_k6
@@ -97,6 +102,7 @@ measurements:
       scenario: create_delete
     statistic: p50
     unit: ms
+    display_unit: duration
   - id: directory-delete-mean
     label: Mean time until Directory Kubernetes object is absent (client-observed)
     source: raw_k6
@@ -106,6 +112,7 @@ measurements:
       scenario: create_delete
     statistic: mean
     unit: ms
+    display_unit: duration
   - id: entitlement-ready-mean
     label: Mean time until Entitlement is Ready (client-observed)
     source: raw_k6
@@ -115,6 +122,7 @@ measurements:
       scenario: create_delete
     statistic: mean
     unit: ms
+    display_unit: duration
   - id: entitlement-ready-p50
     label: Median client-observed Entitlement readiness
     source: raw_k6
@@ -124,6 +132,7 @@ measurements:
       scenario: create_delete
     statistic: p50
     unit: ms
+    display_unit: duration
   - id: entitlement-delete-mean
     label: Mean time until Entitlement Kubernetes object is absent (client-observed)
     source: raw_k6
@@ -133,6 +142,7 @@ measurements:
       scenario: create_delete
     statistic: mean
     unit: ms
+    display_unit: duration
   - id: directory-entitlement-ready-mean
     label: Mean time until DirectoryEntitlement is Ready (client-observed)
     source: raw_k6
@@ -142,6 +152,7 @@ measurements:
       scenario: create_delete
     statistic: mean
     unit: ms
+    display_unit: duration
   - id: directory-entitlement-ready-p50
     label: Median client-observed DirectoryEntitlement readiness
     source: raw_k6
@@ -151,6 +162,7 @@ measurements:
       scenario: create_delete
     statistic: p50
     unit: ms
+    display_unit: duration
   - id: directory-entitlement-delete-mean
     label: Mean time until DirectoryEntitlement Kubernetes object is absent (client-observed)
     source: raw_k6
@@ -160,6 +172,7 @@ measurements:
       scenario: create_delete
     statistic: mean
     unit: ms
+    display_unit: duration
   - id: subaccount-api-credential-ready-mean
     label: Mean time until SubaccountApiCredential is Ready (client-observed)
     source: raw_k6
@@ -169,6 +182,7 @@ measurements:
       scenario: create_delete
     statistic: mean
     unit: ms
+    display_unit: duration
   - id: subaccount-api-credential-ready-p50
     label: Median client-observed SubaccountApiCredential readiness
     source: raw_k6
@@ -178,6 +192,7 @@ measurements:
       scenario: create_delete
     statistic: p50
     unit: ms
+    display_unit: duration
   - id: subaccount-api-credential-delete-mean
     label: Mean time until SubaccountApiCredential Kubernetes object is absent (client-observed)
     source: raw_k6
@@ -187,6 +202,7 @@ measurements:
       scenario: create_delete
     statistic: mean
     unit: ms
+    display_unit: duration
   - id: iterations
     label: Completed benchmark iterations
     source: raw_k6

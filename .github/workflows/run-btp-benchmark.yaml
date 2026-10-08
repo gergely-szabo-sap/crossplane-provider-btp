@@ -313,7 +313,7 @@ jobs:
 
           label_pattern = re.compile(r"[A-Za-z][A-Za-z0-9 ()-]{0,119}\Z")
           number = r"-?(?:\d{1,3}(?:,\d{3})+|\d+)(?:\.\d+)?(?:[eE][+-]?\d+)?"
-          value_pattern = re.compile(rf"(?:{number}(?:\s(?:ms|count|cores|bytes|millicores|MiB))?|n/a|unavailable|Unavailable — [A-Za-z0-9 ,.;:-]{{1,200}})\Z", re.IGNORECASE)
+          value_pattern = re.compile(rf"(?:{number}(?:\s(?:ms|s|min|count|cores|bytes|millicores|MiB))?|n/a|unavailable|Unavailable — [A-Za-z0-9 ,.;:-]{{1,200}})\Z", re.IGNORECASE)
           fixed_change_reasons = (
               "measurement definition differs between runs",
               "metric type differs between runs",
