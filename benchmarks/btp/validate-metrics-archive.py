@@ -17,8 +17,8 @@ import urllib.error
 import urllib.parse
 import urllib.request
 
-EXPECTED_EXECUTION = "0.9.2"
-EXPECTED_REPORT = "0.9.2"
+EXPECTED_EXECUTION = "0.9.4"
+EXPECTED_REPORT = "0.9.4"
 MAX_RESULT_BYTES = 16 * 1024 * 1024
 UNAVAILABLE_CHANGE_REASONS = (
     "measurement definition differs between runs",

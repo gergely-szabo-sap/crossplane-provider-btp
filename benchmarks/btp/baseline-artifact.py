@@ -13,7 +13,7 @@ import subprocess
 import sys
 import tempfile
 
-EXECUTION_CLI = "v0.9.2"
+EXPECTED_CLI = "v0.9.4"
 MAX_JSON = 1 << 20
 MAX_ARCHIVE = 1 << 30
 MAX_LOCAL_ARCHIVE = 50 * 1024 * 1024
@@ -26,7 +26,7 @@ CONTRACT_FILES = (
 )
 LOCAL_FIELDS = {
     "archive_path", "run_id", "run_attempt", "artifact_id", "artifact_expires_at",
-    "head_sha", "archive_sha256", "contract_sha256", "execution_cli", "environment_revision",
+    "head_sha", "archive_sha256", "contract_sha256", "validated_cli", "environment_revision",
 }
 REASONS = {
     "not_configured", "invalid_reference", "invalid_archive", "incompatible_contract",
@@ -56,7 +56,7 @@ def strict_json(path: Path) -> dict:
     except (OSError, UnicodeError, ValueError, json.JSONDecodeError):
         raise Unavailable("invalid_reference")
     if (not isinstance(value, dict) or set(value) != {"schema_version", "baseline"} or
-            value["schema_version"] != "v2"):
+            value["schema_version"] != "v3"):
         raise Unavailable("invalid_reference")
     ref = value["baseline"]
     if ref is None:
@@ -71,7 +71,7 @@ def strict_json(path: Path) -> dict:
                          ("contract_sha256", r"[0-9a-f]{64}")):
         if not isinstance(ref[key], str) or not re.fullmatch(pattern, ref[key]):
             raise Unavailable("invalid_reference")
-    if (ref["execution_cli"] != EXECUTION_CLI or
+    if (ref["validated_cli"] != EXPECTED_CLI or
             not isinstance(ref["environment_revision"], str) or
             not re.fullmatch(r"[A-Za-z0-9][A-Za-z0-9._-]{0,63}", ref["environment_revision"])):
         raise Unavailable("invalid_reference")
@@ -89,7 +89,7 @@ def strict_json(path: Path) -> dict:
 def contract_digest(contents: dict[str, bytes]) -> str:
     digest = hashlib.sha256()
     for name in (*CONTRACT_FILES, "execution-cli"):
-        data = contents[name] if name != "execution-cli" else EXECUTION_CLI.encode()
+        data = contents[name] if name != "execution-cli" else EXPECTED_CLI.encode()
         name_bytes = name.encode()
         digest.update(len(name_bytes).to_bytes(4, "big"))
         digest.update(name_bytes)
@@ -208,7 +208,8 @@ def validate(args) -> int:
             raise Unavailable("self_comparison")
         version = subprocess.run([args.report_cli, "version"], stdout=subprocess.PIPE,
                                  stderr=subprocess.DEVNULL, text=True, timeout=15)
-        if version.returncode != 0 or not re.search(r"(?<![0-9.])v?0\.9\.2(?![0-9.])", version.stdout):
+        if version.returncode != 0 or not re.search(
+                rf"(?<![0-9.])v?{re.escape(EXPECTED_CLI.lstrip('v'))}(?![0-9.])", version.stdout):
             raise Unavailable("unsuitable_evidence")
         private = setup_private(Path(args.temp_dir))
         base_report = cli_report(Path(args.report_cli), baseline, private)

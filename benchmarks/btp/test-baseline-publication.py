@@ -15,7 +15,7 @@ CLI = r'''#!/usr/bin/env python3
 import json, os, pathlib, sys
 args = sys.argv[1:]
 if args == ["version"]:
-    print("xp-diadromos v0.9.2")
+    print("xp-diadromos v0.9.4")
     raise SystemExit(0)
 archive = pathlib.Path(args[args.index("--input") + 1])
 if os.environ.get("FAIL_ARCHIVE") == archive.name:

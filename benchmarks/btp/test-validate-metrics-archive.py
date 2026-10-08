@@ -24,7 +24,7 @@ spec.loader.exec_module(validator)
 STUB = r'''#!/usr/bin/env python3
 import http.server, json, os, pathlib, sys, urllib.parse
 cli_name = pathlib.Path(sys.argv[0]).name
-version = os.environ.get("STUB_REPORT_VERSION" if cli_name == "report-cli" else "STUB_EXECUTION_VERSION", "0.9.2")
+version = os.environ.get("STUB_REPORT_VERSION" if cli_name == "report-cli" else "STUB_EXECUTION_VERSION", "0.9.4")
 args = sys.argv[1:]
 with open(os.environ["COMMAND_LOG"], "a") as log:
     log.write(json.dumps(args) + "\n")
@@ -88,7 +88,7 @@ raise SystemExit(2)
 '''
 
 
-def invoke(*, report_version="0.9.2", execution_version="0.9.2", fail=False, malformed=False, unavailable=False, nan=False, infinity=False, checks="array", baseline=False, expected=0):
+def invoke(*, report_version="0.9.4", execution_version="0.9.4", fail=False, malformed=False, unavailable=False, nan=False, infinity=False, checks="array", baseline=False, expected=0):
     with tempfile.TemporaryDirectory(prefix="btp-replay-test-") as directory:
         root = Path(directory)
         report_cli = root / "report-cli"
@@ -212,7 +212,7 @@ def main():
     test_report_rows_renderer_fixture()
     invoke()
     invoke(report_version="0.0.0-dev", expected=1)
-    invoke(execution_version="0.8.1", expected=1)
+    invoke(execution_version="1.2.3", expected=1)
     invoke(fail=True, expected=1)
     invoke(malformed=True, expected=1)
     invoke(nan=True)
