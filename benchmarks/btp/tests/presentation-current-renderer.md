@@ -4,14 +4,14 @@
 | Provider container maximum sampled CPU usage | 250 millicores |
 | Provider container mean memory usage | 64 MiB |
 | Provider container maximum sampled memory usage | 96 MiB |
-| Complete lifecycle iteration duration | 1250 ms |
+| Complete lifecycle iteration duration | 19.5 min |
 | Mean time until Subaccount is Ready \(client-observed\) | 500 ms |
 | Median client-observed Subaccount readiness | 450 ms |
 | Mean time until Subaccount Kubernetes object is absent \(client-observed\) | 250 ms |
 | Mean time until Directory is Ready \(client-observed\) | 500 ms |
 | Median client-observed Directory readiness | 450 ms |
 | Mean time until Directory Kubernetes object is absent \(client-observed\) | 250 ms |
-| Mean time until Entitlement is Ready \(client-observed\) | 500 ms |
+| Mean time until Entitlement is Ready \(client-observed\) | 1.01 s |
 | Median client-observed Entitlement readiness | 450 ms |
 | Mean time until Entitlement Kubernetes object is absent \(client-observed\) | 250 ms |
 | Mean time until DirectoryEntitlement is Ready \(client-observed\) | 500 ms |
