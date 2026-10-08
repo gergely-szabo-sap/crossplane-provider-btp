@@ -131,7 +131,7 @@ jobs:
         uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
           repository: gergely-szabo-sap/xp-diadromos
-          ref: 986f84848429e28ee64db70af976c6d2a9472b4e
+          ref: 16fe4521237bd8217475b418a4e5f7c25b4c9598
           token: ${{ secrets.XP_DIADROMOS_RELEASE_TOKEN }}
           path: .github/actions/xp-diadromos
           persist-credentials: false
@@ -167,7 +167,7 @@ jobs:
         with:
           config: benchmarks/btp/config.yaml
           cleanup: auto
-          version: v0.9.2
+          version: v0.9.4
           provider-artifact: ${{ steps.package.outputs.path }}
           provider-image: provider:v0
           release-token: ${{ secrets.XP_DIADROMOS_RELEASE_TOKEN }}
@@ -192,7 +192,7 @@ jobs:
         id: baseline-cli
         if: ${{ !cancelled() && steps.baseline-resolution.outputs.baseline_path != '' }}
         env:
-          XP_METRICS_CI_VERSION: v0.9.2
+          XP_METRICS_CI_VERSION: v0.9.4
           XP_METRICS_CI_RELEASE_TOKEN: ${{ secrets.XP_DIADROMOS_RELEASE_TOKEN }}
           XP_METRICS_CI_ACTION_PATH: ${{ github.workspace }}/.github/actions/xp-diadromos/.github/actions/metrics-ci-report
           RUNNER_OS: Linux
@@ -219,7 +219,7 @@ jobs:
         with:
           input: ${{ steps.test.outputs.archive }}
           baseline: ${{ steps.baseline-validation.outputs.baseline_path }}
-          version: v0.9.2
+          version: v0.9.4
           release-token: ${{ secrets.XP_DIADROMOS_RELEASE_TOKEN }}
           presentation: benchmarks/btp/report-presentation.yaml
           artifact-name: btp-synthetic-benchmark-reports
