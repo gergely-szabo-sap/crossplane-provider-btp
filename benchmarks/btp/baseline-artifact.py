@@ -14,6 +14,7 @@ import sys
 import tempfile
 
 EXPECTED_CLI = "v0.9.6"
+COMPATIBLE_VALIDATION_CLIS = {EXPECTED_CLI, "v0.9.4"}
 MAX_JSON = 1 << 20
 MAX_ARCHIVE = 1 << 30
 MAX_LOCAL_ARCHIVE = 50 * 1024 * 1024
@@ -71,7 +72,8 @@ def strict_json(path: Path) -> dict:
                          ("contract_sha256", r"[0-9a-f]{64}")):
         if not isinstance(ref[key], str) or not re.fullmatch(pattern, ref[key]):
             raise Unavailable("invalid_reference")
-    if (ref["validated_cli"] != EXPECTED_CLI or
+    if (not isinstance(ref["validated_cli"], str) or
+            ref["validated_cli"] not in COMPATIBLE_VALIDATION_CLIS or
             not isinstance(ref["environment_revision"], str) or
             not re.fullmatch(r"[A-Za-z0-9][A-Za-z0-9._-]{0,63}", ref["environment_revision"])):
         raise Unavailable("invalid_reference")
@@ -86,10 +88,18 @@ def strict_json(path: Path) -> dict:
     return ref
 
 
-def contract_digest(contents: dict[str, bytes]) -> str:
+def contract_digest(contents: dict[str, bytes], validation_cli: str = EXPECTED_CLI) -> str:
     digest = hashlib.sha256()
     for name in (*CONTRACT_FILES, "execution-cli"):
-        data = contents[name] if name != "execution-cli" else EXPECTED_CLI.encode()
+        data = contents[name] if name != "execution-cli" else validation_cli.encode()
+        if name == "benchmarks/btp/config.yaml" and validation_cli != EXPECTED_CLI:
+            # v0.9.4 baselines predate the tooling-only image bump. Normalize only
+            # that pinned image version; all benchmark configuration remains hashed.
+            current_image = f"xp-diadromos-k6:{EXPECTED_CLI}".encode()
+            historical_image = f"xp-diadromos-k6:{validation_cli}".encode()
+            if data.count(current_image) != 1:
+                raise Unavailable("incompatible_contract")
+            data = data.replace(current_image, historical_image, 1)
         name_bytes = name.encode()
         digest.update(len(name_bytes).to_bytes(4, "big"))
         digest.update(name_bytes)
@@ -149,7 +159,7 @@ def resolve_local(ref: dict, workspace: Path, current_run_id: str) -> int:
         raise Unavailable("invalid_archive")
 
     current = {name: (root / name).read_bytes() for name in CONTRACT_FILES}
-    if contract_digest(current) != ref["contract_sha256"]:
+    if contract_digest(current, ref["validated_cli"]) != ref["contract_sha256"]:
         raise Unavailable("incompatible_contract")
     provenance = (f"run={ref['run_id']};attempt={ref['run_attempt']};sha={ref['head_sha']};"
                   f"artifact={ref['artifact_id']};expires={ref['artifact_expires_at']}")

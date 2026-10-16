@@ -35,9 +35,11 @@ def main():
         for name in module.CONTRACT_FILES:
             path = workspace / name
             path.parent.mkdir(parents=True, exist_ok=True)
-            path.write_bytes(name.encode())
-        contract_hash = module.contract_digest({name: (workspace / name).read_bytes()
-                                                for name in module.CONTRACT_FILES})
+            contents = (b"custom_image: ghcr.io/gergely-szabo-sap/xp-diadromos-k6:v0.9.6\n"
+                        if name == "benchmarks/btp/config.yaml" else name.encode())
+            path.write_bytes(contents)
+        contract_contents = {name: (workspace / name).read_bytes() for name in module.CONTRACT_FILES}
+        contract_hash = module.contract_digest(contract_contents)
         archive = workspace / "benchmarks/btp/baseline/benchmark.tsdb.tar.zst"
         archive.parent.mkdir(parents=True)
         archive_bytes = b"reviewed synthetic baseline"
@@ -58,6 +60,14 @@ def main():
         assert values["baseline_mode"] == "comparison" and values["baseline_run_id"] == "123"
         assert values["baseline_provenance"].endswith("expires=2026-10-13T00:00:00Z")
         assert not list(root.glob("btp-baseline-*"))
+
+        # A v0.9.4 baseline remains eligible only when its contract differs from
+        # current v0.9.6 tooling by the pinned k6 image version alone. The workflow
+        # subsequently revalidates the archive with the current report CLI.
+        legacy_hash = module.contract_digest(contract_contents, "v0.9.4")
+        legacy = descriptor("benchmarks/btp/baseline/benchmark.tsdb.tar.zst", archive_bytes, legacy_hash)
+        legacy["baseline"]["validated_cli"] = "v0.9.4"
+        assert invoke(legacy)["baseline_mode"] == "comparison"
 
         # Original artifact expiry is historical provenance; it does not invalidate Git data.
         expired_provenance = json.loads(json.dumps(good))
