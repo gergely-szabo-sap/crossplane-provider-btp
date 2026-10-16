@@ -24,6 +24,8 @@ def main() -> None:
     )
     files = (*FIXED_FILES, *benchmark_files)
     for relative in files:
+        if relative == "benchmarks/btp/test-tool-version.py":
+            continue
         text = (ROOT / relative).read_text(encoding="utf-8")
         for line_number, line in enumerate(text.splitlines(), start=1):
             for match in VERSION.finditer(line):
@@ -40,8 +42,14 @@ def main() -> None:
                 allowed = {EXPECTED.lstrip("v"), *SYNTHETIC_NEGATIVES}
                 # The checked-in baseline records the CLI that originally validated it;
                 # retain that historical provenance until the archive is revalidated.
-                if (relative == "benchmarks/btp/baseline-ref.json" or
-                        (relative == "benchmarks/btp/benchmark_config_test.go" and "baseline.ValidatedCLI" in line)):
+                historical_reference = (
+                    relative == "benchmarks/btp/baseline-ref.json" or
+                    (relative == "benchmarks/btp/benchmark_config_test.go" and "baseline.ValidatedCLI" in line) or
+                    (relative == "benchmarks/btp/baseline-artifact.py" and "COMPATIBLE_VALIDATION_CLIS" in line) or
+                    (relative == "benchmarks/btp/test-baseline-artifact.py" and 'validated_cli"] = "v0.9.4"' in line) or
+                    (relative == "docs/contribution-notes/btp-synthetic-benchmark-runbook.md" and "v0.9.4 reference" in line)
+                )
+                if historical_reference:
                     allowed.add("0.9.4")
                 if ((TOOL.search(line) or version_assertion)
                         and match.group().lstrip("v") not in allowed):
