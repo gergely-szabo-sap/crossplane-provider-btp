@@ -11,7 +11,7 @@ This benchmark is not a performance gate or a statistical performance test. A he
 1. Provision a dedicated BTP test account with capacity for five simultaneous Subaccounts, five Directories, five Subaccount `cis/local` entitlements, five Directory `cis/local` entitlements, and five read-only API credentials in region `eu10`. Confirm quota, allocation uniqueness, permissions, billing/cost responsibility, a human cleanup contact, and an exact-target fallback operator before enabling the five-instance workload. Directory requires two distinct admins; confirm both are valid users in the account. Confirm `cis/local` is available for all ten allocations without conflicts; any alternative must be approved by the account owner before changing the workload. Do not use a developer or production account.
 2. The workflow intentionally runs `pull_request` benchmarks only for non-draft, same-repository PRs targeting the default branch. Fork PRs are skipped and receive no BTP or release secrets. Same-repository contributors are trusted to execute reviewed PR-head code with the dedicated test-account secrets under this model; the job checks out and asserts the event head SHA with `persist-credentials: false`. Manual dispatch is restricted to the default branch and requires explicit dedicated-account confirmation. Do not change these boundaries without a separate security review.
 3. Configure the approved `pr-e2e-no-approval` environment with variables `GLOBAL_ACCOUNT` (the dedicated global account subdomain) and `CLI_SERVER_URL` (the BTP CLI server URL for that environment), and secrets `BTP_TECHNICAL_USER`, `CIS_CENTRAL_BINDING`, `TECHNICAL_USER_EMAIL`, `SECOND_DIRECTORY_ADMIN_EMAIL`, `XP_DIADROMOS_RELEASE_TOKEN`, and `BTP_ENV_COMPARE_HMAC_KEY`. The account subdomain must match the global account that owns the CIS central binding. The two admin email secrets must identify distinct, valid BTP users. Use the provider's established JSON credential formats. The release token should be a short-lived GitHub App installation token or fine-grained credential with only Contents: read on the private xp-diadromos repository. Generate `BTP_ENV_COMPARE_HMAC_KEY` as 32 random bytes encoded as 64 hex characters (for example, `openssl rand -hex 32`), store it as a GitHub environment secret, and provide the same key to an authorized local comparison through a secure secret manager. Do not print or commit the key. Fingerprints remain linkable while the key is reused, so rotate/remove it after comparison if ongoing correlation is not needed. Never put credential material into config, scripts, artifacts, or logs.
-4. The workflow checks out the private xp-diadromos actions at full commit SHA `16fe4521237bd8217475b418a4e5f7c25b4c9598`, reviewed for v0.9.4 baseline support. It selects execution CLI, report CLI, and k6 image v0.9.4 and compares against the reviewed checked-in baseline when its validation succeeds. Confirm private action checkout and authenticated CLI release-asset installation in a trusted default-branch dispatch; access to the private repository and release assets are separate authorization checks.
+4. The workflow checks out the private xp-diadromos actions at full commit SHA `b91eb197f4746c6c90e48e82cfd461daff143c99`, corresponding to v0.9.6. It selects execution CLI, report CLI, and k6 image v0.9.6 and compares against the reviewed checked-in baseline when its validation succeeds. Confirm private action checkout and authenticated CLI release-asset installation in a trusted default-branch dispatch; access to the private repository and release assets are separate authorization checks.
 
 ## Resource ownership and discovery
 
@@ -44,30 +44,30 @@ Provider reconciliation duration and workqueue waiting duration are five-minute 
 
 Lifecycle phase panels separate client-observed Kubernetes create/delete request acceptance from readiness and Kubernetes-object-absence waits. They show stage and outcome; request acceptance and object absence do not establish remote BTP API latency or remote deletion. Phase means are projected sparse gauges with the same lookback caveat as the other k6 observations. The external-operation panel is supplementary Upjet instrumentation grouped only by operation and archive, with a five-minute mean in seconds. Coverage is partial, has no resource-kind attribution, and `connect` must not be assumed to represent a remote HTTP request. Missing series remain missing rather than being inferred or backfilled.
 
-The PR report retains provider CPU/memory samples and lifecycle means, and adds the complete-iteration duration, per-kind readiness medians, and observed reconciliation-error increases for the five exercised controllers. Execution CLI, report CLI, and k6 image v0.9.4 are selected consistently.
+The PR report retains provider CPU/memory samples and lifecycle means, and adds the complete-iteration duration, per-kind readiness medians, and observed reconciliation-error increases for the five exercised controllers. Execution CLI, report CLI, and k6 image v0.9.6 are selected consistently.
 
 The reviewed baseline archive is checked into Git. Its v3 reference binds the exact workspace-relative file to a SHA-256, current benchmark contract, environment attestation, and source-run provenance. Its `validated_cli` field records consumer compatibility validation, not the executable that produced the source archive. Every eligible workflow validates these before comparison. A missing, corrupted, incompatible, or unsuitable baseline produces a fixed current-only notice; it never selects another run. The source artifact expiry is historical provenance only and does not expire the retained Git object.
 
 For presentation, duration rows are converted to milliseconds below one second, seconds below two minutes, and minutes thereafter; canonical evidence and percentage calculations remain in milliseconds. CPU and memory use supported display units. Readiness statistics are based on five samples per kind and are descriptive, not high-confidence percentiles. Reconciliation errors are observed counter increases, not a failure threshold; a nonzero count alone does not fail an otherwise successful report. The table does not imply continuous throughput, remote API latency, or proof of remote BTP deletion.
 
-An explicit, offline-first replay utility is available for trusted CLI binaries and a caller-approved archive. It requires an already-existing private output directory, checks CLI versions, writes query/report results only there, serves the archive on loopback, and terminates the server on completion or failure. It does not install tools, discover credentials, start clusters, publish comments, or upload data. Never place an archive, report, or query output in the repository or a publication artifact. The acceptance replay requires both published execution and report CLIs at v0.9.4; synthetic tests do not replace pinned-release compatibility. For example:
+An explicit, offline-first replay utility is available for trusted CLI binaries and a caller-approved archive. It requires an already-existing private output directory, checks CLI versions, writes query/report results only there, serves the archive on loopback, and terminates the server on completion or failure. It does not install tools, discover credentials, start clusters, publish comments, or upload data. Never place an archive, report, or query output in the repository or a publication artifact. The acceptance replay requires both published execution and report CLIs at v0.9.6; synthetic tests do not replace pinned-release compatibility. For example:
 
 ```bash
 mkdir -m 700 /tmp/btp-metrics-replay
 python3 benchmarks/btp/validate-metrics-archive.py \
-  --report-cli /path/to/xp-diadromos-v0.9.4 \
-  --execution-cli /path/to/xp-diadromos-v0.9.4 \
+  --report-cli /path/to/xp-diadromos-v0.9.6 \
+  --execution-cli /path/to/xp-diadromos-v0.9.6 \
   --archive /private/path/approved.tsdb.tar.zst \
   --output-dir /tmp/btp-metrics-replay
 ```
 
-For a caller-approved baseline archive, the same private replay utility can exercise the v0.9.4 comparison report path without running a benchmark or publishing data:
+For a caller-approved baseline archive, the same private replay utility can exercise the v0.9.6 comparison report path without running a benchmark or publishing data:
 
 ```bash
 mkdir -m 700 /tmp/btp-metrics-comparison-replay
 python3 benchmarks/btp/validate-metrics-archive.py \
-  --report-cli /path/to/xp-diadromos-v0.9.4 \
-  --execution-cli /path/to/xp-diadromos-v0.9.4 \
+  --report-cli /path/to/xp-diadromos-v0.9.6 \
+  --execution-cli /path/to/xp-diadromos-v0.9.6 \
   --archive /private/path/current.tsdb.tar.zst \
   --baseline /private/path/approved-baseline.tsdb.tar.zst \
   --output-dir /tmp/btp-metrics-comparison-replay
@@ -89,7 +89,7 @@ Replacing a baseline does not authorize dispatching a benchmark. A new run of th
 
 ### Replace a baseline
 
-An authorized operator privately obtains the exact finalized metrics archive from a successful, already-authorized run or another approved source. Do not use latest-run discovery. Preserve source run/attempt/SHA and artifact identity as provenance; the archive's internal run ID is a separate CLI identity. Inspect archive contents privately, confirm the labels/identities/context/measurements are approved for repository readers, check the exact byte size (maximum 50 MiB), and validate completeness/lifecycle evidence with the trusted released v0.9.4 report CLI. Keep archive bytes and all preflight output in a private mode-0700 temporary directory; never print archive contents or use a workflow/API credential in shell history.
+An authorized operator privately obtains the exact finalized metrics archive from a successful, already-authorized run or another approved source. Do not use latest-run discovery. Preserve source run/attempt/SHA and artifact identity as provenance; the archive's internal run ID is a separate CLI identity. Inspect archive contents privately, confirm the labels/identities/context/measurements are approved for repository readers, check the exact byte size (maximum 50 MiB), and validate completeness/lifecycle evidence with the trusted released v0.9.6 report CLI. Keep archive bytes and all preflight output in a private mode-0700 temporary directory; never print archive contents or use a workflow/API credential in shell history.
 
 The local `resolve` command validates a reference already present in the checkout; it does not download or prepare a candidate. There is intentionally no artifact importer, designation command, or active-reference writer. Prepare the candidate archive and updated v3 descriptor as a reviewed pair. Compute SHA-256 over the unchanged archive bytes, update contract and environment provenance, and preserve the actual source metadata.
 
@@ -105,7 +105,7 @@ Restore an earlier archive/reference pair from Git history only if it remains co
 
 The workflow may still execute/publish current measurements if baseline resolution is unavailable. A corrupt current archive, current report/preflight failure, report installation/publication failure, lifecycle-verifier failure, or comment sanitizer failure remains visible; baseline fallback must not retry the report or mask those errors. When comparison is active, all 28 existing presentation rows remain, with upstream-rendered baseline/current values and descriptive changes; no percentages are recomputed from display text and no policies or thresholds are added. A change may be rendered as `Unavailable — …` when its definition/type/kind differs, run identity is unavailable or not distinct, the baseline is not strictly positive, a display-unit conversion is unavailable, or the finite numeric range is exceeded. These fixed explanatory reasons are preserved by replay and comment validation; they do not replace either side's measured value, imply zero, change `status: not_evaluated`, or add a policy/verdict. Other unavailable values remain descriptive and do not become performance failures.
 
-For first adoption and each baseline replacement, separately verify private action checkout and authenticated v0.9.4 release installation on a trusted runner, replay caller-approved complete archives through both released CLIs, inspect current-only/comparison output and report status/role ordering, and review summary/comment rendering and artifact allowlists. No cross-run Actions API access is needed for baseline retrieval. These checks do not authorize a BTP run; a default-branch dispatch requires separate explicit account-owner/live authorization and verified remote cleanup/credential revocation.
+For first adoption and each baseline replacement, separately verify private action checkout and authenticated v0.9.6 release installation on a trusted runner, replay caller-approved complete archives through both released CLIs, inspect current-only/comparison output and report status/role ordering, and review summary/comment rendering and artifact allowlists. No cross-run Actions API access is needed for baseline retrieval. These checks do not authorize a BTP run; a default-branch dispatch requires separate explicit account-owner/live authorization and verified remote cleanup/credential revocation.
 
 ## Local-versus-CI build comparison
 
@@ -113,7 +113,7 @@ The CI job builds and packages the checked-out reviewed SHA for Linux AMD64, the
 
 ## Operational interpretation
 
-The execution CLI, report CLI, and k6 image all use v0.9.4. The provider package comes from the checked-out reviewed SHA. The 25 create/Ready/delete sequences execute serially with one VU and one iteration; all 25 resources remain present until the final Ready observation.
+The execution CLI, report CLI, and k6 image all use v0.9.6. The provider package comes from the checked-out reviewed SHA. The 25 create/Ready/delete sequences execute serially with one VU and one iteration; all 25 resources remain present until the final Ready observation.
 
 Each resource has a 600-second readiness and deletion cap. Aggregate readiness polling is bounded by a 2,700-second creation budget; cleanup has an independent 3,000-second reservation, so worst-case polling allowance is 95 minutes.
 

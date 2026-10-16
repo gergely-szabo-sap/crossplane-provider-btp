@@ -4,7 +4,7 @@ from pathlib import Path
 import re
 
 ROOT = Path(__file__).resolve().parents[2]
-EXPECTED = "v0.9.4"
+EXPECTED = "v0.9.6"
 FIXED_FILES = (
     ".github/workflows/run-btp-benchmark.yaml",
     "docs/contribution-notes/btp-synthetic-benchmark-runbook.md",
@@ -38,17 +38,22 @@ def main() -> None:
                         and ("==" in line or "version=" in line or "VERSION" in line))
                 )
                 allowed = {EXPECTED.lstrip("v"), *SYNTHETIC_NEGATIVES}
+                # The checked-in baseline records the CLI that originally validated it;
+                # retain that historical provenance until the archive is revalidated.
+                if (relative == "benchmarks/btp/baseline-ref.json" or
+                        (relative == "benchmarks/btp/benchmark_config_test.go" and "baseline.ValidatedCLI" in line)):
+                    allowed.add("0.9.4")
                 if ((TOOL.search(line) or version_assertion)
                         and match.group().lstrip("v") not in allowed):
                     errors.append(
                         f"{relative}:{line_number}: unexpected xp-diadromos selection {match.group()}"
                     )
     workflow = (ROOT / FIXED_FILES[0]).read_text(encoding="utf-8")
-    if workflow.count("version: v0.9.4") != 2 or "XP_METRICS_CI_VERSION: v0.9.4" not in workflow:
-        errors.append("workflow must explicitly select v0.9.4 for execution, preflight, and reporting")
+    if workflow.count("version: v0.9.6") != 2 or "XP_METRICS_CI_VERSION: v0.9.6" not in workflow:
+        errors.append("workflow must explicitly select v0.9.6 for execution, preflight, and reporting")
     config = (ROOT / "benchmarks/btp/config.yaml").read_text(encoding="utf-8")
-    if "xp-diadromos-k6:v0.9.4" not in config:
-        errors.append("benchmark config must select the v0.9.4 k6 image")
+    if "xp-diadromos-k6:v0.9.6" not in config:
+        errors.append("benchmark config must select the v0.9.6 k6 image")
     if errors:
         raise SystemExit("\n".join(errors))
     print("Benchmark tooling version audit passed.")

@@ -22,7 +22,7 @@ def descriptor(archive_path, archive, contract_hash):
         "archive_path": archive_path, "run_id": 123, "run_attempt": 2, "artifact_id": 456,
         "artifact_expires_at": "2026-10-13T00:00:00Z", "head_sha": "a" * 40,
         "archive_sha256": hashlib.sha256(archive).hexdigest(), "contract_sha256": contract_hash,
-        "validated_cli": "v0.9.4", "environment_revision": "dedicated-account-3",
+        "validated_cli": "v0.9.6", "environment_revision": "dedicated-account-3",
     }}
 
 

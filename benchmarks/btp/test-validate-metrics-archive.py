@@ -24,7 +24,7 @@ spec.loader.exec_module(validator)
 STUB = r'''#!/usr/bin/env python3
 import http.server, json, os, pathlib, sys, urllib.parse
 cli_name = pathlib.Path(sys.argv[0]).name
-version = os.environ.get("STUB_REPORT_VERSION" if cli_name == "report-cli" else "STUB_EXECUTION_VERSION", "0.9.4")
+version = os.environ.get("STUB_REPORT_VERSION" if cli_name == "report-cli" else "STUB_EXECUTION_VERSION", "0.9.6")
 args = sys.argv[1:]
 with open(os.environ["COMMAND_LOG"], "a") as log:
     log.write(json.dumps(args) + "\n")
@@ -88,7 +88,7 @@ raise SystemExit(2)
 '''
 
 
-def invoke(*, report_version="0.9.4", execution_version="0.9.4", fail=False, malformed=False, unavailable=False, nan=False, infinity=False, checks="array", baseline=False, expected=0):
+def invoke(*, report_version="0.9.6", execution_version="0.9.6", fail=False, malformed=False, unavailable=False, nan=False, infinity=False, checks="array", baseline=False, expected=0):
     with tempfile.TemporaryDirectory(prefix="btp-replay-test-") as directory:
         root = Path(directory)
         report_cli = root / "report-cli"
