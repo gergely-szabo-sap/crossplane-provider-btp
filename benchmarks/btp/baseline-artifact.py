@@ -13,7 +13,7 @@ import subprocess
 import sys
 import tempfile
 
-EXPECTED_CLI = "v0.9.4"
+EXPECTED_CLI = "v0.9.6"
 MAX_JSON = 1 << 20
 MAX_ARCHIVE = 1 << 30
 MAX_LOCAL_ARCHIVE = 50 * 1024 * 1024
