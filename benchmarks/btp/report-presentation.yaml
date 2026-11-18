@@ -1,0 +1,279 @@
+schema_version: v1
+measurements:
+  - id: provider-cpu-mean
+    label: Provider container mean CPU usage
+    source: tsdb
+    metric: xp_diadromos_container_cpu_usage_cores
+    match:
+      job: resource
+      namespace: crossplane-system
+      container: package-runtime
+    statistic: mean
+    unit: cores
+    display_unit: millicores
+  - id: provider-cpu-max
+    label: Provider container maximum sampled CPU usage
+    source: tsdb
+    metric: xp_diadromos_container_cpu_usage_cores
+    match:
+      job: resource
+      namespace: crossplane-system
+      container: package-runtime
+    statistic: max
+    unit: cores
+    display_unit: millicores
+  - id: provider-memory-mean
+    label: Provider container mean memory usage
+    source: tsdb
+    metric: xp_diadromos_container_memory_usage_bytes
+    match:
+      job: resource
+      namespace: crossplane-system
+      container: package-runtime
+    statistic: mean
+    unit: bytes
+    display_unit: MiB
+  - id: provider-memory-max
+    label: Provider container maximum sampled memory usage
+    source: tsdb
+    metric: xp_diadromos_container_memory_usage_bytes
+    match:
+      job: resource
+      namespace: crossplane-system
+      container: package-runtime
+    statistic: max
+    unit: bytes
+    display_unit: MiB
+  - id: iteration-duration-mean
+    label: Complete lifecycle iteration duration
+    source: raw_k6
+    metric: iteration_duration
+    match:
+      scenario: create_delete
+    statistic: mean
+    unit: ms
+    display_unit: duration
+  - id: subaccount-ready-mean
+    label: Mean time until Subaccount is Ready (client-observed)
+    source: raw_k6
+    metric: xp_time_to_ready
+    match:
+      resource_kind: Subaccount
+      scenario: create_delete
+    statistic: mean
+    unit: ms
+    display_unit: duration
+  - id: subaccount-ready-p50
+    label: Median client-observed Subaccount readiness
+    source: raw_k6
+    metric: xp_time_to_ready
+    match:
+      resource_kind: Subaccount
+      scenario: create_delete
+    statistic: p50
+    unit: ms
+    display_unit: duration
+  - id: subaccount-delete-mean
+    label: Mean time until Subaccount Kubernetes object is absent (client-observed)
+    source: raw_k6
+    metric: xp_time_to_delete
+    match:
+      resource_kind: Subaccount
+      scenario: create_delete
+    statistic: mean
+    unit: ms
+    display_unit: duration
+  - id: directory-ready-mean
+    label: Mean time until Directory is Ready (client-observed)
+    source: raw_k6
+    metric: xp_time_to_ready
+    match:
+      resource_kind: Directory
+      scenario: create_delete
+    statistic: mean
+    unit: ms
+    display_unit: duration
+  - id: directory-ready-p50
+    label: Median client-observed Directory readiness
+    source: raw_k6
+    metric: xp_time_to_ready
+    match:
+      resource_kind: Directory
+      scenario: create_delete
+    statistic: p50
+    unit: ms
+    display_unit: duration
+  - id: directory-delete-mean
+    label: Mean time until Directory Kubernetes object is absent (client-observed)
+    source: raw_k6
+    metric: xp_time_to_delete
+    match:
+      resource_kind: Directory
+      scenario: create_delete
+    statistic: mean
+    unit: ms
+    display_unit: duration
+  - id: entitlement-ready-mean
+    label: Mean time until Entitlement is Ready (client-observed)
+    source: raw_k6
+    metric: xp_time_to_ready
+    match:
+      resource_kind: Entitlement
+      scenario: create_delete
+    statistic: mean
+    unit: ms
+    display_unit: duration
+  - id: entitlement-ready-p50
+    label: Median client-observed Entitlement readiness
+    source: raw_k6
+    metric: xp_time_to_ready
+    match:
+      resource_kind: Entitlement
+      scenario: create_delete
+    statistic: p50
+    unit: ms
+    display_unit: duration
+  - id: entitlement-delete-mean
+    label: Mean time until Entitlement Kubernetes object is absent (client-observed)
+    source: raw_k6
+    metric: xp_time_to_delete
+    match:
+      resource_kind: Entitlement
+      scenario: create_delete
+    statistic: mean
+    unit: ms
+    display_unit: duration
+  - id: directory-entitlement-ready-mean
+    label: Mean time until DirectoryEntitlement is Ready (client-observed)
+    source: raw_k6
+    metric: xp_time_to_ready
+    match:
+      resource_kind: DirectoryEntitlement
+      scenario: create_delete
+    statistic: mean
+    unit: ms
+    display_unit: duration
+  - id: directory-entitlement-ready-p50
+    label: Median client-observed DirectoryEntitlement readiness
+    source: raw_k6
+    metric: xp_time_to_ready
+    match:
+      resource_kind: DirectoryEntitlement
+      scenario: create_delete
+    statistic: p50
+    unit: ms
+    display_unit: duration
+  - id: directory-entitlement-delete-mean
+    label: Mean time until DirectoryEntitlement Kubernetes object is absent (client-observed)
+    source: raw_k6
+    metric: xp_time_to_delete
+    match:
+      resource_kind: DirectoryEntitlement
+      scenario: create_delete
+    statistic: mean
+    unit: ms
+    display_unit: duration
+  - id: subaccount-api-credential-ready-mean
+    label: Mean time until SubaccountApiCredential is Ready (client-observed)
+    source: raw_k6
+    metric: xp_time_to_ready
+    match:
+      resource_kind: SubaccountApiCredential
+      scenario: create_delete
+    statistic: mean
+    unit: ms
+    display_unit: duration
+  - id: subaccount-api-credential-ready-p50
+    label: Median client-observed SubaccountApiCredential readiness
+    source: raw_k6
+    metric: xp_time_to_ready
+    match:
+      resource_kind: SubaccountApiCredential
+      scenario: create_delete
+    statistic: p50
+    unit: ms
+    display_unit: duration
+  - id: subaccount-api-credential-delete-mean
+    label: Mean time until SubaccountApiCredential Kubernetes object is absent (client-observed)
+    source: raw_k6
+    metric: xp_time_to_delete
+    match:
+      resource_kind: SubaccountApiCredential
+      scenario: create_delete
+    statistic: mean
+    unit: ms
+    display_unit: duration
+  - id: iterations
+    label: Completed benchmark iterations
+    source: raw_k6
+    metric: iterations
+    match:
+      scenario: create_delete
+    statistic: sum
+    unit: count
+  - id: resources-created
+    label: Kubernetes resource objects accepted for creation
+    source: raw_k6
+    metric: xp_resources_created
+    match:
+      scenario: create_delete
+    statistic: sum
+    unit: count
+  - id: resources-deleted
+    label: Kubernetes resource delete requests accepted
+    source: raw_k6
+    metric: xp_resources_deleted
+    match:
+      scenario: create_delete
+    statistic: sum
+    unit: count
+  - id: subaccount-reconcile-errors
+    label: Subaccount observed reconciliation errors
+    source: tsdb
+    metric: controller_runtime_reconcile_errors_total
+    match:
+      job: provider
+      namespace: crossplane-system
+      controller: managed/subaccount.account.btp.sap.crossplane.io
+    statistic: observed_increase
+    unit: count
+  - id: directory-reconcile-errors
+    label: Directory observed reconciliation errors
+    source: tsdb
+    metric: controller_runtime_reconcile_errors_total
+    match:
+      job: provider
+      namespace: crossplane-system
+      controller: managed/directory.account.btp.sap.crossplane.io
+    statistic: observed_increase
+    unit: count
+  - id: entitlement-reconcile-errors
+    label: Entitlement observed reconciliation errors
+    source: tsdb
+    metric: controller_runtime_reconcile_errors_total
+    match:
+      job: provider
+      namespace: crossplane-system
+      controller: managed/entitlement.account.btp.sap.crossplane.io
+    statistic: observed_increase
+    unit: count
+  - id: directory-entitlement-reconcile-errors
+    label: DirectoryEntitlement observed reconciliation errors
+    source: tsdb
+    metric: controller_runtime_reconcile_errors_total
+    match:
+      job: provider
+      namespace: crossplane-system
+      controller: managed/account.btp.sap.crossplane.io/v1alpha1, kind=directoryentitlement
+    statistic: observed_increase
+    unit: count
+  - id: subaccount-api-credential-reconcile-errors
+    label: SubaccountApiCredential observed reconciliation errors
+    source: tsdb
+    metric: controller_runtime_reconcile_errors_total
+    match:
+      job: provider
+      namespace: crossplane-system
+      controller: managed/security.btp.sap.crossplane.io/v1alpha1, kind=subaccountapicredential
+    statistic: observed_increase
+    unit: count
