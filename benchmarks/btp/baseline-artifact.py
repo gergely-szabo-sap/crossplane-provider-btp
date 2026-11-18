@@ -13,7 +13,7 @@ import subprocess
 import sys
 import tempfile
 
-EXPECTED_CLI = "v0.9.6"
+EXPECTED_CLI = "v0.9.7"
 COMPATIBLE_VALIDATION_CLIS = {EXPECTED_CLI, "v0.9.4"}
 MAX_JSON = 1 << 20
 MAX_ARCHIVE = 1 << 30

@@ -305,13 +305,13 @@ func TestBenchmarkWorkflowToolPins(t *testing.T) {
 		switch {
 		case step.Name == "Check out pinned xp-diadromos actions":
 			actionCheckout = step.With["repository"] == "gergely-szabo-sap/xp-diadromos" &&
-				step.With["ref"] == "b91eb197f4746c6c90e48e82cfd461daff143c99"
+				step.With["ref"] == "b5585f25fd9b98390f63693fa3a9805092d8a89d"
 		case strings.HasSuffix(step.Uses, "/run-test"):
-			execution = step.With["version"] == "v0.9.6"
+			execution = step.With["version"] == "v0.9.7"
 		case strings.HasSuffix(step.Uses, "/metrics-ci-report"):
-			report = step.With["version"] == "v0.9.6" && step.With["input"] == "${{ steps.test.outputs.archive }}"
+			report = step.With["version"] == "v0.9.7" && step.With["input"] == "${{ steps.test.outputs.archive }}"
 		case step.Name == "Install CLI for baseline preflight":
-			preflight = step.Env["XP_METRICS_CI_VERSION"] == "v0.9.6"
+			preflight = step.Env["XP_METRICS_CI_VERSION"] == "v0.9.7"
 		}
 	}
 	configBytes, err := os.ReadFile(filepath.Join(root, "benchmarks/btp/config.yaml"))
@@ -326,7 +326,7 @@ func TestBenchmarkWorkflowToolPins(t *testing.T) {
 	if err := yaml.Unmarshal(configBytes, &config); err != nil {
 		t.Fatalf("parse benchmark config: %v", err)
 	}
-	k6Image := config.K6.CustomImage == "ghcr.io/gergely-szabo-sap/xp-diadromos-k6:v0.9.6"
+	k6Image := config.K6.CustomImage == "ghcr.io/gergely-szabo-sap/xp-diadromos-k6:v0.9.7"
 	modeOutput := strings.Contains(workflow.Jobs["benchmark"].Outputs["report_mode"], "baseline-validation") &&
 		strings.Contains(workflow.Jobs["benchmark"].Outputs["report_mode"], "current-only")
 	workflowText := string(content)

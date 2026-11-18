@@ -22,7 +22,7 @@ def descriptor(archive_path, archive, contract_hash):
         "archive_path": archive_path, "run_id": 123, "run_attempt": 2, "artifact_id": 456,
         "artifact_expires_at": "2026-10-13T00:00:00Z", "head_sha": "a" * 40,
         "archive_sha256": hashlib.sha256(archive).hexdigest(), "contract_sha256": contract_hash,
-        "validated_cli": "v0.9.6", "environment_revision": "dedicated-account-3",
+        "validated_cli": "v0.9.7", "environment_revision": "dedicated-account-3",
     }}
 
 
@@ -35,7 +35,7 @@ def main():
         for name in module.CONTRACT_FILES:
             path = workspace / name
             path.parent.mkdir(parents=True, exist_ok=True)
-            contents = (b"custom_image: ghcr.io/gergely-szabo-sap/xp-diadromos-k6:v0.9.6\n"
+            contents = (b"custom_image: ghcr.io/gergely-szabo-sap/xp-diadromos-k6:v0.9.7\n"
                         if name == "benchmarks/btp/config.yaml" else name.encode())
             path.write_bytes(contents)
         contract_contents = {name: (workspace / name).read_bytes() for name in module.CONTRACT_FILES}
@@ -62,7 +62,7 @@ def main():
         assert not list(root.glob("btp-baseline-*"))
 
         # A v0.9.4 baseline remains eligible only when its contract differs from
-        # current v0.9.6 tooling by the pinned k6 image version alone. The workflow
+        # current v0.9.7 tooling by the pinned k6 image version alone. The workflow
         # subsequently revalidates the archive with the current report CLI.
         legacy_hash = module.contract_digest(contract_contents, "v0.9.4")
         legacy = descriptor("benchmarks/btp/baseline/benchmark.tsdb.tar.zst", archive_bytes, legacy_hash)
